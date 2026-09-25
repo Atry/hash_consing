@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: fabasoad/setup-prolog-action@v1
+      - name: Rewrite test
+        run: test/hash_consing_rewrite.sh | diff - test/hash_consing_rewrite_baseline.txt
+      - name: The pack installs and loads
+        run: |
+          mkdir -p "$RUNNER_TEMP/packs"
+          swipl -g "pack_install('.', [pack_directory('$RUNNER_TEMP/packs'), interactive(false), register(false)]), use_module(library(hash_consing))" -t halt
+
+  version:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: fabasoad/setup-prolog-action@v1
+      - name: pack.pl names a version above every release
+        run: |
+          VERSION="$(swipl -g "read_file_to_terms('pack.pl', Terms, []), memberchk(version(Version), Terms), write(Version)" -t halt)"
+          test -n "$VERSION"
+          if git rev-parse --quiet --verify "refs/tags/V$VERSION" > /dev/null; then
+            echo "V$VERSION is already released; raise version/1 in pack.pl" >&2
+            exit 1
+          fi
+          LATEST="$(git tag --list 'V*' | sed 's/^V//' | sort -V | tail -n 1)"
+          if [ -n "$LATEST" ]; then
+            test "$(printf '%s\n%s\n' "$LATEST" "$VERSION" | sort -V | tail -n 1)" = "$VERSION"
+          fi
+
+  publish:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: fabasoad/setup-prolog-action@v1
+      - name: swipl pack publish
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git branch --set-upstream-to=origin/main main
+          swipl -g "pack_publish('.', [sign(false), branch(main), interactive(false)])" -t halt
