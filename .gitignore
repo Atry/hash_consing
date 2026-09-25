@@ -1,0 +1,2 @@
+# pack_install('.') links the pack directory here and writes its bookkeeping file into it.
+/status.db
