@@ -1,8 +1,8 @@
-%   Fixture of test/hash_consing_rewrite.pl: forty clauses told apart by
+%   Fixture of test/hash_consing.plt: forty clauses told apart by
 %   the INNER constructor of an application, enough for SWI-Prolog to build a
 %   deep index on the shape, the first argument of the Id.
 :- module(inner_dispatch, [kind/2]).
-:- use_module('../../prolog/hash_consing', []).
+:- use_module(library(hash_consing), []).
 :- hash_consing:rewritten([apply(*, _), closure_00(_), closure_01(_), closure_02(_), closure_03(_), closure_04(_), closure_05(_), closure_06(_), closure_07(_), closure_08(_), closure_09(_), closure_10(_), closure_11(_), closure_12(_), closure_13(_), closure_14(_), closure_15(_), closure_16(_), closure_17(_), closure_18(_), closure_19(_), closure_20(_), closure_21(_), closure_22(_), closure_23(_), closure_24(_), closure_25(_), closure_26(_), closure_27(_), closure_28(_), closure_29(_), closure_30(_), closure_31(_), closure_32(_), closure_33(_), closure_34(_), closure_35(_), closure_36(_), closure_37(_), closure_38(_), closure_39(_)]).
 
 kind(apply(closure_00(_), _), closure_00).
