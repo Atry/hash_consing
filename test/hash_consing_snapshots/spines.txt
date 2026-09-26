@@ -1,0 +1,125 @@
+predicate(head/2)
+head('__hash_consed_application/2'('application/2(lambda/1)', A), redex_under_an_application) :-
+    (   nonvar(A)
+    ->  hash_consing:intern(application(application('__hash_consed_lambda/1'(B), C), D), '__hash_consed_application/2'('application/2(lambda/1)', A)),
+        hash_consing:intern(lambda(E), '__hash_consed_lambda/1'(B))
+    ;   (   nonvar(A)
+        ->  hash_consing:intern(application(application('__hash_consed_lambda/1'(B), C), D), '__hash_consed_application/2'('application/2(lambda/1)', A))
+        ;   true
+        ),
+        (   nonvar(B)
+        ->  hash_consing:intern(lambda(E), '__hash_consed_lambda/1'(B))
+        ;   true
+        ),
+        (   var(B),
+            ground(lambda(E))
+        ->  hash_consing:intern(lambda(E), '__hash_consed_lambda/1'(B))
+        ;   true
+        ),
+        (   var(A),
+            ground(application(application('__hash_consed_lambda/1'(B), C), D))
+        ->  hash_consing:intern(application(application('__hash_consed_lambda/1'(B), C), D), '__hash_consed_application/2'('application/2(lambda/1)', A))
+        ;   true
+        ),
+        (   var(B)
+        ->  hash_consing:intern(lambda(E), '__hash_consed_lambda/1'(B))
+        ;   true
+        ),
+        (   var(A)
+        ->  hash_consing:intern(application(application('__hash_consed_lambda/1'(B), C), D), '__hash_consed_application/2'('application/2(lambda/1)', A))
+        ;   true
+        )
+    ).
+head('__hash_consed_application/2'('application/2(closure/1)', A), compiled_redex_under_an_application) :-
+    (   nonvar(A)
+    ->  hash_consing:intern(application(application('__hash_consed_closure/1'(B), C), D), '__hash_consed_application/2'('application/2(closure/1)', A)),
+        hash_consing:intern(closure(E), '__hash_consed_closure/1'(B))
+    ;   (   nonvar(A)
+        ->  hash_consing:intern(application(application('__hash_consed_closure/1'(B), C), D), '__hash_consed_application/2'('application/2(closure/1)', A))
+        ;   true
+        ),
+        (   nonvar(B)
+        ->  hash_consing:intern(closure(E), '__hash_consed_closure/1'(B))
+        ;   true
+        ),
+        (   var(B),
+            ground(closure(E))
+        ->  hash_consing:intern(closure(E), '__hash_consed_closure/1'(B))
+        ;   true
+        ),
+        (   var(A),
+            ground(application(application('__hash_consed_closure/1'(B), C), D))
+        ->  hash_consing:intern(application(application('__hash_consed_closure/1'(B), C), D), '__hash_consed_application/2'('application/2(closure/1)', A))
+        ;   true
+        ),
+        (   var(B)
+        ->  hash_consing:intern(closure(E), '__hash_consed_closure/1'(B))
+        ;   true
+        ),
+        (   var(A)
+        ->  hash_consing:intern(application(application('__hash_consed_closure/1'(B), C), D), '__hash_consed_application/2'('application/2(closure/1)', A))
+        ;   true
+        )
+    ).
+head(application('__hash_consed_lambda/1'(A), _), redex) :-
+    (   nonvar(A)
+    ->  hash_consing:intern(lambda(B), '__hash_consed_lambda/1'(A))
+    ;   (   nonvar(A)
+        ->  hash_consing:intern(lambda(B), '__hash_consed_lambda/1'(A))
+        ;   true
+        ),
+        (   var(A),
+            ground(lambda(B))
+        ->  hash_consing:intern(lambda(B), '__hash_consed_lambda/1'(A))
+        ;   true
+        ),
+        (   var(A)
+        ->  hash_consing:intern(lambda(B), '__hash_consed_lambda/1'(A))
+        ;   true
+        )
+    ).
+predicate(inner/2)
+inner('__hash_consed_application/2'(A, B), C) :-
+    (   nonvar(B)
+    ->  hash_consing:intern(application(D, E), '__hash_consed_application/2'(A, B)),
+        hash_consing:represented(application(C, F), D)
+    ;   (   nonvar(B)
+        ->  hash_consing:intern(application(D, E), '__hash_consed_application/2'(A, B))
+        ;   true
+        ),
+        (   nonvar(D),
+            (   D='__hash_consed_application/2'(_, G)
+            ->  nonvar(G)
+            ;   true
+            )
+        ->  hash_consing:represented(application(C, F), D)
+        ;   true
+        ),
+        (   \+ ( nonvar(D),
+                 (   D='__hash_consed_application/2'(_, H)
+                 ->  nonvar(H)
+                 ;   true
+                 )
+               ),
+            ground(application(C, F))
+        ->  hash_consing:represented(application(C, F), D)
+        ;   true
+        ),
+        (   var(B),
+            ground(application(D, E))
+        ->  hash_consing:intern(application(D, E), '__hash_consed_application/2'(A, B))
+        ;   true
+        ),
+        (   nonvar(D),
+            (   D='__hash_consed_application/2'(_, I)
+            ->  nonvar(I)
+            ;   true
+            )
+        ->  true
+        ;   hash_consing:represented_settled(application(C, F), D)
+        ),
+        (   var(B)
+        ->  hash_consing:intern(application(D, E), '__hash_consed_application/2'(A, B))
+        ;   true
+        )
+    ).

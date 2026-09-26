@@ -15,8 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: fabasoad/setup-prolog-action@v1
-      - name: Rewrite test
-        run: test/hash_consing_rewrite.sh | diff - test/hash_consing_rewrite_baseline.txt
+      - name: Tests
+        run: swipl -p library=prolog --stack-limit=32m --table-space=32m -g run_tests -t halt test/hash_consing.plt
       - name: The pack installs and loads
         run: |
           mkdir -p "$RUNNER_TEMP/packs"

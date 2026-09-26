@@ -1,7 +1,7 @@
-%   Fixture of test/hash_consing_rewrite.pl: a constructor declared
+%   Fixture of test/hash_consing.plt: a constructor declared
 %   twice with different templates, which raises while the file loads.
 :- module(reconfigured, [first/1]).
-:- use_module('../../prolog/hash_consing', []).
+:- use_module(library(hash_consing), []).
 :- hash_consing:rewritten([apply(*, _)]).
 :- hash_consing:rewritten([apply(*, *)]).
 
