@@ -1,14 +1,18 @@
 %   THE TEST OF THE HASH_CONSING LIBRARY, run from the root of the pack as
 %       swipl -p library=prolog --stack-limit=32m --table-space=32m \
 %             -g run_tests -t halt test/hash_consing.plt
-%   Eight plunit units, 60 tests. One unit per fixture file of
+%   Ten plunit units, 65 tests. One unit per fixture file of
 %   `hash_consing_fixtures/`, whose setup loads the fixture: its test
 %   `snapshot` requires the errors the load raised, then the clauses the
 %   load produced, rendered as text, to be byte for byte the file of
 %   `hash_consing_snapshots/` named after the fixture, and each other test is
 %   one query. The unit `library` checks that the library under test is this
-%   checkout's, and the unit `declarations` how lists of templates are
-%   declared. Failing it is a defect by definition: what a rewrite produces
+%   checkout's, the unit `declarations` how lists of templates are declared,
+%   the unit `interrupted_intern` that an interning interrupted by a limit
+%   leaves no key that fails to answer its term, and the unit `concurrency`
+%   that threads sharing the store declare, intern and spell shapes as one
+%   thread would. Failing it is a defect by definition: what a rewrite
+%   produces
 %   and how `intern/2` answers are fixed by the module comment of
 %   prolog/hash_consing.pl, not measured.
 %
@@ -55,6 +59,9 @@
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module(library(listing), [portray_clause/1]).
 :- use_module(library(settings), [set_setting/2]).
+:- use_module(library(time), [call_with_time_limit/2]).
+:- use_module(library(thread), [concurrent_maplist/2, concurrent_maplist/3]).
+:- use_module(library(apply), [maplist/3]).
 
 %   A GOAL IS NEVER WRAPPED: `portray_clause/1` otherwise breaks a goal that
 %   does not fit in the listing's line width, 78 columns, and a rendering
@@ -218,6 +225,66 @@ shape_indexed(Head) :-
 
 called_repeatedly(Goal) :-
     forall(between(1, 20, _), ( call(Goal) -> true ; true )).
+
+%!  answers_its_term(+Term)  Term interns to an Id that externalizes back to
+%   Term.
+answers_its_term(Term) :-
+    intern(Term, Id),
+    externalized(Id, Back),
+    Back == Term.
+
+%!  interned_forever(+Round, +Index)  interns `time_probe(Round, Index,
+%   leaf)` and the probes after it until a limit stops it, recording in
+%   the global variable `interrupted_intern_count` the last Index interned.
+interned_forever(Round, Index) :-
+    intern(time_probe(Round, Index, leaf), _),
+    nb_setval(interrupted_intern_count, Index),
+    Next is Index + 1,
+    interned_forever(Round, Next).
+
+%!  numbered_template(+Prefix, +Number, -Template)  the template
+%   `Prefix_Number(_)`.
+numbered_template(Prefix, Number, Template) :-
+    format(atom(Name), '~w_~d', [Prefix, Number]),
+    functor(Template, Name, 1).
+
+%!  templates_declared_one_by_one(+Templates, +Worker)  each template
+%   declared alone, in the order of the list.
+templates_declared_one_by_one(Templates, _) :-
+    forall(member(Template, Templates), declared([Template])).
+
+%!  thread_stores(-Stores)  the store and the spellings of this thread, the
+%   two global variables of prolog/hash_consing.pl.
+thread_stores(stores(Store, Spellings)) :-
+    nb_getval(hash_consing_store, Store),
+    nb_getval(hash_consing_spellings, Spellings).
+
+%!  thread_stores_installed(+Stores)  Stores installed in this thread, which
+%   then interns into the same tries.
+thread_stores_installed(stores(Store, Spellings)) :-
+    nb_setval(hash_consing_store, Store),
+    nb_setval(hash_consing_spellings, Spellings).
+
+%!  terms_interned_with_stores(+Stores, +Numbers, +Worker, -Ids)  the Id of
+%   `concurrently_interned(Number)` for each of Numbers, interned by this
+%   thread into Stores.
+terms_interned_with_stores(Stores, Numbers, _, Ids) :-
+    thread_stores_installed(Stores),
+    maplist(number_interned, Numbers, Ids).
+
+number_interned(Number, Id) :-
+    intern(concurrently_interned(Number), Id).
+
+%!  shapes_interned_with_stores(+Stores, +Numbers, +Worker, -Ids)  the Id of
+%   `concurrently_shaped(shape_Number, Worker)` for each of Numbers: a term
+%   of this thread's own, whose shape every thread spells alike.
+shapes_interned_with_stores(Stores, Numbers, Worker, Ids) :-
+    thread_stores_installed(Stores),
+    maplist(shape_interned(Worker), Numbers, Ids).
+
+shape_interned(Worker, Number, Id) :-
+    atom_concat(shape_, Number, Root),
+    intern(concurrently_shaped(Root, Worker), Id).
 
 %   ---- the fixtures ----
 
@@ -614,3 +681,80 @@ test(semicolon_is_a_constructor, [nondet]) :-
     is_id(Chosen).
 
 :- end_tests(declarations).
+
+%   AN INTERRUPTED INSERTION: `intern/2` interrupted between its insertion
+%   and the write-back of the node's handle, by `call_with_inference_limit/3`
+%   or by `call_with_time_limit/2`, leaves a store whose every key still
+%   answers its own term (settled_handle/4 of prolog/hash_consing.pl). The
+%   probes' constructors are declared in the unit's setup, every argument
+%   `_`.
+
+:- begin_tests(interrupted_intern,
+               [setup(declared([inference_probe(_, _), time_probe(_, _, _)])), timeout(1)]).
+
+%   Every inference limit from 1 to 300 on the interning of a fresh term:
+%   one of them falls between the insertion and the write-back.
+test(an_inference_limit_between_insertion_and_write_back) :-
+    forall(between(1, 300, Limit),
+           call_with_inference_limit(intern(inference_probe(Limit, leaf), _), Limit, _)),
+    forall(between(1, 300, Limit),
+           assertion(answers_its_term(inference_probe(Limit, leaf)))).
+
+%   Time limits of a millisecond on a loop interning fresh terms: each
+%   expires somewhere in an interning; the terms interned so far, and the
+%   one being interned, still answer themselves.
+test(a_time_limit_during_interning) :-
+    forall(between(1, 50, Round),
+           ( nb_setval(interrupted_intern_count, 0),
+             catch(call_with_time_limit(0.001, interned_forever(Round, 1)),
+                   time_limit_exceeded,
+                   true),
+             nb_getval(interrupted_intern_count, Count),
+             Last is Count + 1,
+             forall(between(1, Last, Index),
+                    assertion(answers_its_term(time_probe(Round, Index, leaf)))) )).
+
+:- end_tests(interrupted_intern).
+
+%   THREADS SHARE ONE STORE: a thread that installs the store and the
+%   spellings of the loading thread declares, interns and spells shapes
+%   while other threads do the same. Eight workers do each thing at once;
+%   what they leave is then read in one thread.
+
+:- begin_tests(concurrency, [timeout(1)]).
+
+%   Every constructor that the workers declared at once is registered once:
+%   is_id/1 and intern/2 answer once on an Id of it.
+test(a_constructor_declared_by_many_threads_is_registered_once) :-
+    numlist(1, 2000, Numbers),
+    maplist(numbered_template(concurrently_declared), Numbers, Templates),
+    numlist(1, 8, Workers),
+    concurrent_maplist(templates_declared_one_by_one(Templates), Workers),
+    forall(member(Template, Templates),
+           ( functor(Template, Name, 1),
+             functor(Term, Name, 1),
+             arg(1, Term, leaf),
+             intern(Term, Id),
+             aggregate_all(count, is_id(Id), 1),
+             aggregate_all(count, intern(_, Id), 1) )).
+
+%   A term that the workers intern at once has one Id, and no worker raises.
+test(a_term_interned_by_many_threads_has_one_id) :-
+    declared([concurrently_interned(_)]),
+    numlist(1, 20000, Numbers),
+    thread_stores(Stores),
+    numlist(1, 8, Workers),
+    concurrent_maplist(terms_interned_with_stores(Stores, Numbers), Workers, IdLists),
+    IdLists = [Ids | OtherIdLists],
+    forall(member(OtherIds, OtherIdLists), OtherIds == Ids).
+
+%   A shape that the workers spell at once, each for a term of its own, is
+%   spelled without failing any of them.
+test(a_shape_spelled_by_many_threads_fails_no_interning) :-
+    declared([concurrently_shaped(*, _)]),
+    numlist(1, 2000, Numbers),
+    thread_stores(Stores),
+    numlist(1, 8, Workers),
+    concurrent_maplist(shapes_interned_with_stores(Stores, Numbers), Workers, _).
+
+:- end_tests(concurrency).

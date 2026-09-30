@@ -268,6 +268,17 @@ uninterned fails to unify at every rewritten position. Using an Id as an
 opaque key, whose result does not depend on the order (an assoc key, a sort
 to remove duplicates), is fine.
 
+THREADS SHARE THE STORE WHEN THEY INSTALL IT. The store and the spellings
+of the shapes are tries in two global variables of the thread that loaded
+this module, `hash_consing_store` and `hash_consing_spellings`, and a
+thread made later starts without them; a thread that sets both to the
+loading thread's tries (read there with `nb_getval/2`, set with
+`nb_setval/2`) declares, interns and looks up alongside the others, with
+the answers one thread would give. A lookup that finds its key takes no
+lock. A declaration, an insertion into the store and a new spelling each
+take a mutex (`hash_consing_templates`, `hash_consing_store`,
+`hash_consing_spellings`) and look again under it before they write.
+
 THIS MODULE REFLECTS ON SOURCE CLAUSES with `=..` while a file loads, a
 mechanical boundary; nothing here chooses behaviour at run time by
 reflection, and no closure is handed to another module.
@@ -344,22 +355,54 @@ upserted(Term, Id) :-
     templates_known(Name, Arity, hash_consing:intern/2, Templates, Kind),
     first_template_recorded(Templates, Term, Structure),
     nb_getval(hash_consing_store, Trie),
-    (   trie_lookup(Trie, Term, Handle)
-    ->  true
-    ;   sig_atomic(inserted(Trie, Term, Handle))
+    (   trie_lookup(Trie, Term, Found)
+    ->  settled_handle(Trie, Term, Found, Handle)
+    ;   with_mutex(hash_consing_store, handle_inserted(Trie, Term, Handle))
     ),
     id_built(Name, Arity, Kind, Structure, Handle, Id).
 
+%   handle_inserted(+Trie, +Term, -Handle): Term looked up again and, when it
+%   is still absent, inserted, under the mutex `hash_consing_store`. Two
+%   threads that share the store and both miss Term would otherwise both
+%   insert it, and the second trie_insert/4 raises
+%   `permission_error(modify, trie_key, Term)` (measured 2026-09-30: eight
+%   threads interning the same 20000 terms raised in 5 of 5 runs). A lookup
+%   that finds Term takes no mutex.
+
+handle_inserted(Trie, Term, Handle) :-
+    (   trie_lookup(Trie, Term, Found)
+    ->  settled_handle(Trie, Term, Found, Handle)
+    ;   sig_atomic(inserted(Trie, Term, Handle))
+    ).
+
 %   inserted(+Trie, +Term, -Handle): the insertion and the write-back of the
-%   key's own handle as its value, run under `sig_atomic/1` by upserted/2: a
-%   signal between the two (a `call_with_time_limit/2` expiring) left the
-%   value `pending` for good, and every later lookup of the key answered
-%   `pending` as its handle, which `trie_term/2` rejects (seen 2026-09-26 in
-%   lambda_jit's tests, whose readings run under a time limit).
+%   key's own handle as its value, run under `sig_atomic/1` by
+%   handle_inserted/3, so
+%   that a signal (a `call_with_time_limit/2` expiring) waits until both are
+%   done. `call_with_inference_limit/3` is no signal: its limit can still
+%   fall between the two and leave the value `pending` (measured 2026-09-27:
+%   interning a fresh two-argument term under a limit of 9 inferences left it
+%   `pending`, and the next lookup handed `pending` to `trie_term/2`, which
+%   raised `type_error(address, pending)`). settled_handle/4 repairs such a
+%   key at its next lookup.
 
 inserted(Trie, Term, Handle) :-
     trie_insert(Trie, Term, pending, Handle),
     trie_update(Trie, Term, Handle).
+
+%   settled_handle(+Trie, +Term, +Found, -Handle): the handle of Term's node,
+%   Found when the value was written back, and otherwise, when an
+%   interrupted insertion left `pending`, the node's own handle, read with
+%   `'$trie_gen_node'/3` (SWI-Prolog's generator of a trie's keys with their
+%   nodes, here with the key bound) and written back. The repair may itself
+%   be interrupted between its two steps; the key then stays `pending` and
+%   is repaired at its next lookup.
+
+settled_handle(Trie, Term, pending, Handle) :-
+    !,
+    '$trie_gen_node'(Trie, Term, Handle),
+    trie_update(Trie, Term, Handle).
+settled_handle(_, _, Handle, Handle).
 
 %!  represented(?Layer, ?Representation)  Representation represents Layer, a
 %   constructor applied to represented arguments: its Id when a template of
@@ -475,9 +518,20 @@ id_built(Name, Arity, Kind, Structure, Handle, Id) :-
 id_name(Name, Arity, IdName) :-
     (   known_id_name(Name, Arity, Known)
     ->  IdName = Known
+    ;   with_mutex(hash_consing_templates, id_name_made(Name, Arity, IdName))
+    ).
+
+%   id_name_made(+Name, +Arity, -IdName): the name looked up again under the
+%   mutex `hash_consing_templates`, and made when it is still unknown.
+%   id_constructor/3 is asserted before known_id_name/3, so a thread that
+%   finds the name without the mutex also finds the fact id_parts/4 reads.
+
+id_name_made(Name, Arity, IdName) :-
+    (   known_id_name(Name, Arity, Known)
+    ->  IdName = Known
     ;   format(atom(Made), '__hash_consed_~w/~d', [Name, Arity]),
-        assertz(known_id_name(Name, Arity, Made)),
         assertz(id_constructor(Made, Name, Arity)),
+        assertz(known_id_name(Name, Arity, Made)),
         IdName = Made
     ).
 
@@ -517,6 +571,17 @@ templates_declared(Templates, Context, Constructors) :-
     parsed_constructors(Parsed, [], Reversed),
     reverse(Reversed, Constructors),
     constructors_groups(Constructors, Parsed, Groups),
+    with_mutex(hash_consing_templates, groups_declared(Groups, Context)).
+
+%   groups_declared(+Groups, +Context): the groups checked against the lists
+%   already declared, then registered, as one step under the mutex
+%   `hash_consing_templates`. Two threads declaring a constructor at once
+%   would otherwise both find it undeclared and both register it (measured
+%   2026-09-30: eight threads declaring the same 2000 constructors left 3924
+%   registrations and 3631 Id names, and is_id/1 answered once for each Id
+%   name of its constructor, since id_parts/4 reads them).
+
+groups_declared(Groups, Context) :-
     groups_checked(Groups, Context),
     groups_registered(Groups).
 
@@ -851,6 +916,19 @@ value_view(_, other).
 
 structure_spelled(Structure, Atom) :-
     nb_getval(hash_consing_spellings, Spellings),
+    (   trie_lookup(Spellings, Structure, Known)
+    ->  Atom = Known
+    ;   with_mutex(hash_consing_spellings, spelling_inserted(Spellings, Structure, Atom))
+    ).
+
+%   spelling_inserted(+Spellings, +Structure, -Atom): the spelling looked up
+%   again and, when it is still absent, made and inserted, under the mutex
+%   `hash_consing_spellings`. Two threads that both miss a structure would
+%   otherwise both insert it, and the second trie_insert/3 fails, which
+%   fails its interning (measured 2026-09-30: eight threads spelling the
+%   same 2000 shapes).
+
+spelling_inserted(Spellings, Structure, Atom) :-
     (   trie_lookup(Spellings, Structure, Known)
     ->  Atom = Known
     ;   structure_atom(Structure, Atom),
