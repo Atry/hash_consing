@@ -60,3 +60,12 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git branch --set-upstream-to=origin/main main
           swipl -g "pack_publish('.', [sign(false), branch(main), interactive(false)])" -t halt
+      - name: GitHub release of the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(swipl -g "read_file_to_terms('pack.pl', Terms, []), memberchk(version(Version), Terms), write(Version)" -t halt)"
+          test -n "$VERSION"
+          if ! gh release view "V$VERSION" > /dev/null 2>&1; then
+            gh release create "V$VERSION" --verify-tag --title "V$VERSION" --generate-notes
+          fi

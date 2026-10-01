@@ -1,5 +1,5 @@
 name(hash_consing).
-version('0.2.1').
+version('0.2.2').
 title('Hash-consed terms by clause rewriting').
 keywords([interning, 'hash-consing', trie, term_expansion]).
 author('Yang, Bo', 'yang-bo@yang-bo.com').

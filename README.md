@@ -148,7 +148,8 @@ Open pull requests against `main`. `main` changes only by merging a pull
 request with a merge commit, and every merge into `main` is a release:
 CI runs `swipl pack publish` on the merged `main`, which tags `V<version>`
 from the `version/1` of `pack.pl`, installs the pack from this repository
-in an isolated directory and registers it with the SWI-Prolog pack server.
+in an isolated directory and registers it with the SWI-Prolog pack server;
+CI then makes the GitHub release of the tag, with notes GitHub generates.
 A pull request into `main` must therefore raise `version/1` above every
 released version; a required check enforces it.
 
