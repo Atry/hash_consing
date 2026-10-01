@@ -82,6 +82,43 @@ keeps its meaning and loses the first argument index there. A body goal hands
 such an occurrence over decided: what is bound of it must settle whether a
 template matches, or the call raises an instantiation error.
 
+## Share one directive among files
+
+**Warning:** the rewrite is per file. A file rewrites only the constructors
+its own `hash_consing:rewritten/1` lists, and the library checks nothing
+between files. When an interned term crosses into a file that does not list
+its constructor, that file keeps plain terms, so its heads and the Ids never
+unify: the call fails, silently, with no error.
+
+Keep the directive in one file and `include/1` it in every file that hands
+these terms to another, so that all of them list the same templates:
+
+```prolog
+% calculus_templates.pl
+:- hash_consing:rewritten([apply(lambda(_), _), lambda(_), variable(_)]).
+```
+
+```prolog
+:- module(producer, [redex/1]).
+:- use_module(library(hash_consing), []).
+:- include(calculus_templates).
+
+redex(apply(lambda(variable(0)), variable(1))).
+```
+
+```prolog
+:- module(consumer, [is_redex/1]).
+:- use_module(library(hash_consing), []).
+:- include(calculus_templates).
+
+is_redex(apply(lambda(_), _)).
+```
+
+The included directive opts in the file that includes it. Here
+`redex(R), is_redex(R)` succeeds. A third module that defines the same
+`is_redex/1` without the include fails on the same `R`, because its head
+is a plain `apply(lambda(_), _)` and `R` is an Id.
+
 ## Incompatible changes in 0.2.0
 
 - A nested template requires its constructor: `apply(apply(*, _), _)` matches

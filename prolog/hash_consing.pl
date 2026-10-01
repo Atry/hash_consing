@@ -191,8 +191,10 @@ decided at run time, so the file is written as the program that does not
 intern and needs no mode declaration. Several directives in one file add up,
 each declaring whole lists. An empty list rewrites nothing. The library
 checks no consistency between files: files that pass one constructor to each
-other must both list it, which the user arranges, for instance with one
-included file (user ruling, 2026-09-17).
+other must both list it, which the user arranges (user ruling, 2026-09-17).
+SHARE ONE DIRECTIVE BY `include/1`: keep the directive in one file that every
+file handing these terms to another includes; an included directive opts in
+the file that includes it. A file left out fails silently (the FIXME below).
 
 AN OCCURRENCE IS CLASSIFIED while the file loads, by comparing its source
 pattern with each template of its constructor: every instance of the pattern
@@ -306,8 +308,8 @@ variable.
 
 FIXME: a file that uses a constructor another file
 interns, without listing it, passes its instances uninterned; the rewritten
-positions of the other file then fail to unify, silently. The library cannot
-see it.
+positions of the other file then fail to unify, silently. The library does
+not check it; one directive shared by `include/1` (above) avoids it.
 */
 
 :- use_module(library(error), [must_be/2]).
