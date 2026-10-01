@@ -1,8 +1,8 @@
-%   Fixture of test/hash_consing_rewrite.pl: clauses told apart by an
+%   Fixture of test/hash_consing.plt: clauses told apart by an
 %   inner constructor; the template apply(*, _) records the root constructor
 %   of an application's first argument.
 :- module(steps, [step/2, callee/2, built/2, constant/1]).
-:- use_module('../../prolog/hash_consing', []).
+:- use_module(library(hash_consing), []).
 :- hash_consing:rewritten([apply(*, _), lambda(_), variable(_), closure_a(_), closure_b]).
 
 %   The shape is determined: the atom goes into the head.

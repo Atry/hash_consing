@@ -1,0 +1,143 @@
+predicate(step/2)
+step('__hash_consed_apply/2'('lambda/1', A), beta(B, C)) :-
+    (   nonvar(A)
+    ->  hash_consing:intern(apply('__hash_consed_lambda/1'(D), C), '__hash_consed_apply/2'('lambda/1', A)),
+        hash_consing:intern(lambda(B), '__hash_consed_lambda/1'(D))
+    ;   (   nonvar(A)
+        ->  hash_consing:intern(apply('__hash_consed_lambda/1'(D), C), '__hash_consed_apply/2'('lambda/1', A))
+        ;   true
+        ),
+        (   nonvar(D)
+        ->  hash_consing:intern(lambda(B), '__hash_consed_lambda/1'(D))
+        ;   true
+        ),
+        (   var(D),
+            ground(lambda(B))
+        ->  hash_consing:intern(lambda(B), '__hash_consed_lambda/1'(D))
+        ;   true
+        ),
+        (   var(A),
+            ground(apply('__hash_consed_lambda/1'(D), C))
+        ->  hash_consing:intern(apply('__hash_consed_lambda/1'(D), C), '__hash_consed_apply/2'('lambda/1', A))
+        ;   true
+        ),
+        (   var(D)
+        ->  hash_consing:intern(lambda(B), '__hash_consed_lambda/1'(D))
+        ;   true
+        ),
+        (   var(A)
+        ->  hash_consing:intern(apply('__hash_consed_lambda/1'(D), C), '__hash_consed_apply/2'('lambda/1', A))
+        ;   true
+        )
+    ).
+step('__hash_consed_apply/2'('closure_a/1', A), compiled(B, C)) :-
+    (   nonvar(A)
+    ->  hash_consing:intern(apply('__hash_consed_closure_a/1'(D), C), '__hash_consed_apply/2'('closure_a/1', A)),
+        hash_consing:intern(closure_a(B), '__hash_consed_closure_a/1'(D))
+    ;   (   nonvar(A)
+        ->  hash_consing:intern(apply('__hash_consed_closure_a/1'(D), C), '__hash_consed_apply/2'('closure_a/1', A))
+        ;   true
+        ),
+        (   nonvar(D)
+        ->  hash_consing:intern(closure_a(B), '__hash_consed_closure_a/1'(D))
+        ;   true
+        ),
+        (   var(D),
+            ground(closure_a(B))
+        ->  hash_consing:intern(closure_a(B), '__hash_consed_closure_a/1'(D))
+        ;   true
+        ),
+        (   var(A),
+            ground(apply('__hash_consed_closure_a/1'(D), C))
+        ->  hash_consing:intern(apply('__hash_consed_closure_a/1'(D), C), '__hash_consed_apply/2'('closure_a/1', A))
+        ;   true
+        ),
+        (   var(D)
+        ->  hash_consing:intern(closure_a(B), '__hash_consed_closure_a/1'(D))
+        ;   true
+        ),
+        (   var(A)
+        ->  hash_consing:intern(apply('__hash_consed_closure_a/1'(D), C), '__hash_consed_apply/2'('closure_a/1', A))
+        ;   true
+        )
+    ).
+step('__hash_consed_apply/2'('closure_b/0', A), constant(B)) :-
+    (   nonvar(A)
+    ->  hash_consing:intern(apply(baked(closure_b), B), '__hash_consed_apply/2'('closure_b/0', A))
+    ;   (   nonvar(A)
+        ->  hash_consing:intern(apply(baked(closure_b), B), '__hash_consed_apply/2'('closure_b/0', A))
+        ;   true
+        ),
+        (   var(A),
+            ground(apply(baked(closure_b), B))
+        ->  hash_consing:intern(apply(baked(closure_b), B), '__hash_consed_apply/2'('closure_b/0', A))
+        ;   true
+        ),
+        (   var(A)
+        ->  hash_consing:intern(apply(baked(closure_b), B), '__hash_consed_apply/2'('closure_b/0', A))
+        ;   true
+        )
+    ).
+step('__hash_consed_apply/2'('apply/2', A), spine(B, C, D)) :-
+    (   nonvar(A)
+    ->  hash_consing:intern(apply('__hash_consed_apply/2'(E, F), D), '__hash_consed_apply/2'('apply/2', A)),
+        hash_consing:intern(apply(B, C), '__hash_consed_apply/2'(E, F))
+    ;   (   nonvar(A)
+        ->  hash_consing:intern(apply('__hash_consed_apply/2'(E, F), D), '__hash_consed_apply/2'('apply/2', A))
+        ;   true
+        ),
+        (   nonvar(F)
+        ->  hash_consing:intern(apply(B, C), '__hash_consed_apply/2'(E, F))
+        ;   true
+        ),
+        (   var(F),
+            ground(apply(B, C))
+        ->  hash_consing:intern(apply(B, C), '__hash_consed_apply/2'(E, F))
+        ;   true
+        ),
+        (   var(A),
+            ground(apply('__hash_consed_apply/2'(E, F), D))
+        ->  hash_consing:intern(apply('__hash_consed_apply/2'(E, F), D), '__hash_consed_apply/2'('apply/2', A))
+        ;   true
+        ),
+        (   var(F)
+        ->  hash_consing:intern(apply(B, C), '__hash_consed_apply/2'(E, F))
+        ;   true
+        ),
+        (   var(A)
+        ->  hash_consing:intern(apply('__hash_consed_apply/2'(E, F), D), '__hash_consed_apply/2'('apply/2', A))
+        ;   true
+        )
+    ).
+predicate(callee/2)
+callee('__hash_consed_apply/2'(A, B), C) :-
+    (   nonvar(B)
+    ->  hash_consing:intern(apply(C, D), '__hash_consed_apply/2'(A, B))
+    ;   (   nonvar(B)
+        ->  hash_consing:intern(apply(C, D), '__hash_consed_apply/2'(A, B))
+        ;   true
+        ),
+        (   var(B),
+            ground(apply(C, D))
+        ->  hash_consing:intern(apply(C, D), '__hash_consed_apply/2'(A, B))
+        ;   true
+        ),
+        (   var(B)
+        ->  hash_consing:intern(apply(C, D), '__hash_consed_apply/2'(A, B))
+        ;   true
+        )
+    ).
+predicate(built/2)
+built(A, B) :-
+    (   ground([A])
+    ->  hash_consing:intern(apply(A, baked(variable(0))), '__hash_consed_apply/2'(C, D)),
+        B='__hash_consed_apply/2'(C, D)
+    ;   (   ground(apply(A, baked(variable(0))))
+        ->  hash_consing:intern(apply(A, baked(variable(0))), '__hash_consed_apply/2'(C, D))
+        ;   true
+        ),
+        B='__hash_consed_apply/2'(C, D),
+        hash_consing:intern(apply(A, baked(variable(0))), '__hash_consed_apply/2'(C, D))
+    ).
+predicate(constant/1)
+constant(baked(apply(lambda(variable(0)), closure_b))).

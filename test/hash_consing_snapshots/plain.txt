@@ -1,0 +1,51 @@
+predicate(doubled/2)
+doubled(A, '__hash_consed_pair/2'(B)) :-
+    (   nonvar(B)
+    ->  hash_consing:intern(pair(A, A), '__hash_consed_pair/2'(B))
+    ;   (   nonvar(B)
+        ->  hash_consing:intern(pair(A, A), '__hash_consed_pair/2'(B))
+        ;   true
+        ),
+        (   var(B),
+            ground(pair(A, A))
+        ->  hash_consing:intern(pair(A, A), '__hash_consed_pair/2'(B))
+        ;   true
+        ),
+        (   var(B)
+        ->  hash_consing:intern(pair(A, A), '__hash_consed_pair/2'(B))
+        ;   true
+        )
+    ).
+predicate(swapped/2)
+swapped('__hash_consed_pair/2'(A), '__hash_consed_pair/2'(B)) :-
+    (   nonvar(A),
+        nonvar(B)
+    ->  hash_consing:intern(pair(C, D), '__hash_consed_pair/2'(B)),
+        hash_consing:intern(pair(D, C), '__hash_consed_pair/2'(A))
+    ;   (   nonvar(B)
+        ->  hash_consing:intern(pair(C, D), '__hash_consed_pair/2'(B))
+        ;   true
+        ),
+        (   nonvar(A)
+        ->  hash_consing:intern(pair(D, C), '__hash_consed_pair/2'(A))
+        ;   true
+        ),
+        (   var(A),
+            ground(pair(D, C))
+        ->  hash_consing:intern(pair(D, C), '__hash_consed_pair/2'(A))
+        ;   true
+        ),
+        (   var(B),
+            ground(pair(C, D))
+        ->  hash_consing:intern(pair(C, D), '__hash_consed_pair/2'(B))
+        ;   true
+        ),
+        (   var(A)
+        ->  hash_consing:intern(pair(D, C), '__hash_consed_pair/2'(A))
+        ;   true
+        ),
+        (   var(B)
+        ->  hash_consing:intern(pair(C, D), '__hash_consed_pair/2'(B))
+        ;   true
+        )
+    ).
