@@ -1,8 +1,7 @@
 predicate(kind/2)
 kind('__hash_consed_app/2'('abs/1', A), redex) :-
     (   nonvar(A)
-    ->  hash_consing:intern(app('__hash_consed_abs/1'(B), C), '__hash_consed_app/2'('abs/1', A)),
-        hash_consing:intern(abs(D), '__hash_consed_abs/1'(B))
+    ->  hash_consing:intern(app('__hash_consed_abs/1'(B), C), '__hash_consed_app/2'('abs/1', A))
     ;   (   nonvar(A)
         ->  hash_consing:intern(app('__hash_consed_abs/1'(B), C), '__hash_consed_app/2'('abs/1', A))
         ;   true
@@ -33,8 +32,7 @@ kind('__hash_consed_app/2'('abs/1', A), redex) :-
 kind('__hash_consed_app/2'('app/2(abs/1)', A), redex_under_an_application) :-
     (   nonvar(A)
     ->  hash_consing:intern(app('__hash_consed_app/2'('abs/1', B), C), '__hash_consed_app/2'('app/2(abs/1)', A)),
-        hash_consing:intern(app('__hash_consed_abs/1'(D), E), '__hash_consed_app/2'('abs/1', B)),
-        hash_consing:intern(abs(F), '__hash_consed_abs/1'(D))
+        hash_consing:intern(app('__hash_consed_abs/1'(D), E), '__hash_consed_app/2'('abs/1', B))
     ;   (   nonvar(A)
         ->  hash_consing:intern(app('__hash_consed_app/2'('abs/1', B), C), '__hash_consed_app/2'('app/2(abs/1)', A))
         ;   true
@@ -77,9 +75,7 @@ kind('__hash_consed_app/2'('app/2(abs/1)', A), redex_under_an_application) :-
     ).
 kind('__hash_consed_app/2'('ref/1', A), stuck) :-
     (   nonvar(A)
-    ->  hash_consing:intern(app('__hash_consed_ref/1'(B), '__hash_consed_ref/1'(C)), '__hash_consed_app/2'('ref/1', A)),
-        hash_consing:intern(ref(D), '__hash_consed_ref/1'(C)),
-        hash_consing:intern(ref(E), '__hash_consed_ref/1'(B))
+    ->  hash_consing:intern(app('__hash_consed_ref/1'(B), '__hash_consed_ref/1'(C)), '__hash_consed_app/2'('ref/1', A))
     ;   (   nonvar(A)
         ->  hash_consing:intern(app('__hash_consed_ref/1'(B), '__hash_consed_ref/1'(C)), '__hash_consed_app/2'('ref/1', A))
         ;   true
@@ -123,8 +119,7 @@ kind('__hash_consed_app/2'('ref/1', A), stuck) :-
 kind(app('__hash_consed_ref/1'(A), '__hash_consed_abs/1'(B)), plain) :-
     (   nonvar(A),
         nonvar(B)
-    ->  hash_consing:intern(abs(C), '__hash_consed_abs/1'(B)),
-        hash_consing:intern(ref(D), '__hash_consed_ref/1'(A))
+    ->  true
     ;   (   nonvar(B)
         ->  hash_consing:intern(abs(C), '__hash_consed_abs/1'(B))
         ;   true
@@ -216,7 +211,7 @@ size('__hash_consed_abs/1'(A), B) :-
     ).
 size('__hash_consed_ref/1'(A), 1) :-
     (   nonvar(A)
-    ->  hash_consing:intern(ref(B), '__hash_consed_ref/1'(A))
+    ->  true
     ;   (   nonvar(A)
         ->  hash_consing:intern(ref(B), '__hash_consed_ref/1'(A))
         ;   true
@@ -323,3 +318,6 @@ unbound_built(A) :-
         A=C,
         hash_consing:represented(app(B, baked(abs(ref(0)))), C)
     ).
+predicate(brought_in/2)
+brought_in(A, B) :-
+    hash_consing:internalized([app(abs(_), _), app(app(*, _), _), app(_, ref(_)), abs(_), ref(_)], A, B).

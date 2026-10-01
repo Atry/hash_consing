@@ -1,7 +1,7 @@
 %   THE TEST OF THE HASH_CONSING LIBRARY, run from the root of the pack as
 %       swipl -p library=prolog --stack-limit=32m --table-space=32m \
 %             -g run_tests -t halt test/hash_consing.plt
-%   Ten plunit units, 65 tests. One unit per fixture file of
+%   Twelve plunit units, 86 tests. One unit per fixture file of
 %   `hash_consing_fixtures/`, whose setup loads the fixture: its test
 %   `snapshot` requires the errors the load raised, then the clauses the
 %   load produced, rendered as text, to be byte for byte the file of
@@ -11,10 +11,10 @@
 %   the unit `interrupted_intern` that an interning interrupted by a limit
 %   leaves no key that fails to answer its term, and the unit `concurrency`
 %   that threads sharing the store declare, intern and spell shapes as one
-%   thread would. Failing it is a defect by definition: what a rewrite
-%   produces
-%   and how `intern/2` answers are fixed by the module comment of
-%   prolog/hash_consing.pl, not measured.
+%   thread would, and the unit `store` how the store grows and how its limit
+%   and a thread's growth budget bound it. Failing it is a defect by
+%   definition: what a rewrite produces and how `intern/2` answers are fixed
+%   by the module comment of prolog/hash_consing.pl, not measured.
 %
 %   A CLAUSE IS RENDERED WITH ITS BAKED IDS EXTERNALIZED, `baked(Term)` in
 %   place of the Id, because a handle is an address of this process and would
@@ -53,9 +53,10 @@
 
 :- use_module(library(plunit)).
 :- use_module(library(hash_consing),
-              [intern/2, represented/2, is_id/1, externalized/2, internalized/3, declared/1]).
+              [intern/2, represented/2, is_id/1, externalized/2, internalized/3, declared/1,
+               store_property/1, store_growth_bounded/1]).
 :- use_module(library(aggregate), [aggregate_all/3]).
-:- use_module(library(lists), [member/2]).
+:- use_module(library(lists), [member/2, append/3]).
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module(library(listing), [portray_clause/1]).
 :- use_module(library(settings), [set_setting/2]).
@@ -217,14 +218,13 @@ snapshot_read(Fixture, Snapshot) :-
 %
 %   How many terms the store holds.
 store_count(Count) :-
-    nb_getval(hash_consing_store, Trie),
-    trie_property(Trie, value_count(Count)).
+    store_property(ids(Count)).
 
 %!  spelling_count(-Count)
 %
 %   How many shape atoms the library has spelled.
 spelling_count(Count) :-
-    nb_getval(hash_consing_spellings, Trie),
+    hash_consing:process_stores(_, Trie),
     trie_property(Trie, value_count(Count)).
 
 %!  shape_indexed(+Head)
@@ -274,38 +274,38 @@ numbered_template(Prefix, Number, Template) :-
 templates_declared_one_by_one(Templates, _) :-
     forall(member(Template, Templates), declared([Template])).
 
-%!  thread_stores(-Stores)
-%
-%   The store and the spellings of this thread, the two global variables of
-%   prolog/hash_consing.pl.
-thread_stores(stores(Store, Spellings)) :-
-    nb_getval(hash_consing_store, Store),
-    nb_getval(hash_consing_spellings, Spellings).
-
-%!  thread_stores_installed(+Stores)
-%
-%   Stores installed in this thread, which then interns into the same tries.
-thread_stores_installed(stores(Store, Spellings)) :-
-    nb_setval(hash_consing_store, Store),
-    nb_setval(hash_consing_spellings, Spellings).
-
-%!  terms_interned_with_stores(+Stores, +Numbers, +Worker, -Ids)
+%!  terms_interned(+Numbers, +Worker, -Ids)
 %
 %   The Id of `concurrently_interned(Number)` for each of Numbers, interned by
-%   this thread into Stores.
-terms_interned_with_stores(Stores, Numbers, _, Ids) :-
-    thread_stores_installed(Stores),
+%   this thread, which installed nothing: the store is the process's.
+terms_interned(Numbers, _, Ids) :-
     maplist(number_interned, Numbers, Ids).
+
+%!  read_or_written(+Stored, +Worker, -Read)
+%
+%   An even worker interns the stored terms again, Read their Ids; an odd one
+%   inserts new terms of the same constructor, Read `none`.
+read_or_written(Stored, Worker, Read) :-
+    (   Worker mod 2 =:= 0
+    ->  maplist(read_beside_writers_interned, Stored, Read)
+    ;   Low is 2001 + (Worker - 1) * 1250,
+        High is Low + 1249,
+        numlist(Low, High, New),
+        maplist(read_beside_writers_interned, New, _),
+        Read = none
+    ).
+
+read_beside_writers_interned(Number, Id) :-
+    intern(read_beside_writers(Number), Id).
 
 number_interned(Number, Id) :-
     intern(concurrently_interned(Number), Id).
 
-%!  shapes_interned_with_stores(+Stores, +Numbers, +Worker, -Ids)
+%!  shapes_interned(+Numbers, +Worker, -Ids)
 %
 %   The Id of `concurrently_shaped(shape_Number, Worker)` for each of Numbers:
 %   a term of this thread's own, whose shape every thread spells alike.
-shapes_interned_with_stores(Stores, Numbers, Worker, Ids) :-
-    thread_stores_installed(Stores),
+shapes_interned(Numbers, Worker, Ids) :-
     maplist(shape_interned(Worker), Numbers, Ids).
 
 shape_interned(Worker, Number, Id) :-
@@ -328,7 +328,10 @@ fixture(plain, 'hash_consing_fixtures/plain.pl', plain,
 fixture(inner_dispatch, 'hash_consing_fixtures/inner_dispatch.pl', inner_dispatch, []).
 fixture(reconfigured, 'hash_consing_fixtures/reconfigured.pl', reconfigured, []).
 fixture(patterns, 'hash_consing_fixtures/patterns.pl', patterns,
-        [kind/2, size/2, wrapped/2, first/2, built/2, unbound_built/1]).
+        [kind/2, size/2, wrapped/2, first/2, built/2, unbound_built/1, brought_in/2]).
+fixture(layers, 'hash_consing_fixtures/layers.pl', layers,
+        [slot_made/2, slot_index/2, slot_read/2, linked_index/2, marked_name/2,
+         is_slot/1]).
 
 calculus([apply(*, _), lambda(_), variable(_), closure_a(_), closure_b]).
 deep_calculus([application(application(*, _), _), lambda(_), variable(_), closure(_)]).
@@ -676,6 +679,14 @@ test(represented_decides_a_partial_layer, [nondet]) :-
 test(represented_raises_when_undecided, [error(instantiation_error)]) :-
     represented(app(_, _), _).
 
+%   The templates handed to internalized/3 in an opted-in file are kept as
+%   written, so the call interns what the directive does.
+test(templates_in_a_library_call_are_kept) :-
+    patterns:brought_in(app(abs(ref(1)), ref(2)), Internal),
+    is_id(Internal),
+    patterns:kind(Internal, Kind),
+    Kind == redex.
+
 :- end_tests(patterns).
 
 :- begin_tests(declarations, [timeout(1)]).
@@ -769,9 +780,8 @@ test(a_constructor_declared_by_many_threads_is_registered_once) :-
 test(a_term_interned_by_many_threads_has_one_id) :-
     declared([concurrently_interned(_)]),
     numlist(1, 20000, Numbers),
-    thread_stores(Stores),
     numlist(1, 8, Workers),
-    concurrent_maplist(terms_interned_with_stores(Stores, Numbers), Workers, IdLists),
+    concurrent_maplist(terms_interned(Numbers), Workers, IdLists),
     IdLists = [Ids | OtherIdLists],
     forall(member(OtherIds, OtherIdLists), OtherIds == Ids).
 
@@ -780,8 +790,238 @@ test(a_term_interned_by_many_threads_has_one_id) :-
 test(a_shape_spelled_by_many_threads_fails_no_interning) :-
     declared([concurrently_shaped(*, _)]),
     numlist(1, 2000, Numbers),
-    thread_stores(Stores),
     numlist(1, 8, Workers),
-    concurrent_maplist(shapes_interned_with_stores(Stores, Numbers), Workers, _).
+    concurrent_maplist(shapes_interned(Numbers), Workers, _).
+
+%   Readers that intern stored terms while writers insert new ones of the
+%   same constructor each get the one Id of every term, and none raises.
+test(readers_beside_writers_read_one_id_per_term) :-
+    declared([read_beside_writers(_)]),
+    numlist(1, 2000, Stored),
+    maplist(read_beside_writers_interned, Stored, StoredIds),
+    numlist(1, 8, Workers),
+    concurrent_maplist(read_or_written(Stored), Workers, ReadLists),
+    forall(member(Read, ReadLists), ( Read == none ; Read == StoredIds )),
+    numlist(2001, 12000, Written),
+    maplist(read_beside_writers_interned, Written, WrittenIds),
+    sort(WrittenIds, Distinct),
+    length(Written, Count),
+    length(Distinct, Count).
 
 :- end_tests(concurrency).
+
+%   ---- layers ----
+
+:- begin_tests(layers, [setup(fixture_loaded(layers)), timeout(1)]).
+
+test(snapshot, [true(Rendered == Snapshot)]) :-
+    fixture_rendered(layers, Rendered),
+    snapshot_read(layers, Snapshot).
+
+test(represented_makes_an_id_of_a_written_layer) :-
+    layers:slot_made(3, Slot),
+    intern(slot(3), Expected),
+    Slot == Expected.
+
+test(represented_reads_a_written_layer_back) :-
+    intern(slot(4), Slot),
+    layers:slot_index(Slot, Index),
+    Index == 4.
+
+test(a_layer_handed_out_is_matched_as_written) :-
+    intern(slot(5), Slot),
+    layers:slot_read(Slot, Index),
+    Index == 5.
+
+test(a_listed_constructor_inside_a_layer_is_an_id) :-
+    intern(slot(6), Slot),
+    intern(link(Slot, Slot), Link),
+    layers:linked_index(Link, Index),
+    Index == 6.
+
+test(a_head_layer_matches_a_plain_layer) :-
+    layers:marked_name(marked(name), Name),
+    Name == name.
+
+test(a_head_layer_does_not_match_an_id, [fail]) :-
+    intern(marked(name), Marked),
+    layers:marked_name(Marked, _).
+
+test(an_unread_occurrence_matches_an_id_of_its_constructor) :-
+    intern(slot(7), Slot),
+    layers:is_slot(Slot).
+
+test(an_unread_occurrence_rejects_another_id, [fail]) :-
+    intern(marked(name), Marked),
+    layers:is_slot(Marked).
+
+test(an_unread_occurrence_left_unbound_raises, [error(instantiation_error)]) :-
+    layers:is_slot(_).
+
+test(an_unknown_option_raises, [error(domain_error(rewritten_option, unknown))]) :-
+    hash_consing:rewritten_with_options([], [unknown], hash_consing:rewritten/2).
+
+test(a_skeleton_without_a_layer_raises, [error(domain_error(layer_skeleton, read(_)))]) :-
+    hash_consing:rewritten_with_options([], [layer_arguments([read(_)])], hash_consing:rewritten/2).
+
+:- end_tests(layers).
+
+%   budget_spent_by_this_thread(+Main): sends Main `outcome(raised)` when
+%   this thread, with a budget of one byte, may insert one new term but not
+%   a second, and `outcome(within_budget)` when it may insert both.
+
+budget_spent_by_this_thread(Main) :-
+    store_growth_bounded(1),
+    intern(grown_by_one_thread(1), _),
+    catch(( intern(grown_by_one_thread(2), _), Outcome = within_budget ),
+          error(resource_error(hash_consing_store), _),
+          Outcome = raised),
+    intern(grown_by_one_thread(1), _),
+    thread_send_message(Main, outcome(Outcome)).
+
+%   budget_inherited(+Main): with a budget of one byte, this thread spends
+%   it on one new term and creates a thread that runs
+%   budget_spent_by_this_thread/1 without setting a budget of its own; that
+%   thread may insert one new term, its count being zero, but not a second,
+%   and sends Main its outcome.
+
+budget_inherited(Main) :-
+    store_growth_bounded(1),
+    intern(grown_by_an_inheriting_thread(0), _),
+    thread_create(budget_spent_by_inheriting_thread(Main), Thread, []),
+    thread_join(Thread, true).
+
+budget_spent_by_inheriting_thread(Main) :-
+    intern(grown_by_an_inheriting_thread(1), _),
+    catch(( intern(grown_by_an_inheriting_thread(2), _), Outcome = within_budget ),
+          error(resource_error(hash_consing_store), _),
+          Outcome = raised),
+    thread_send_message(Main, outcome(Outcome)).
+
+%   grown_in_parallel_interned(+Group, +Number): `grown_in_parallel(Group,
+%   Number)` interned.
+
+grown_in_parallel_interned(Group, Number) :-
+    intern(grown_in_parallel(Group, Number), _).
+
+%   budgeted_halves(+Main, +Budget, +Numbers): with a budget of Budget bytes,
+%   this thread interns the first half of Numbers, tells Main, waits for
+%   `go_on`, interns the second half, and sends Main `outcome(raised)` if an
+%   insertion raised, `outcome(within_budget)` otherwise.
+
+budgeted_halves(Main, Budget, Numbers) :-
+    store_growth_bounded(Budget),
+    length(Numbers, Count),
+    Half is Count // 2,
+    length(FirstHalf, Half),
+    append(FirstHalf, SecondHalf, Numbers),
+    maplist(grown_in_parallel_interned(budgeted), FirstHalf),
+    thread_send_message(Main, first_half_interned),
+    thread_get_message(go_on),
+    catch(( maplist(grown_in_parallel_interned(budgeted), SecondHalf),
+            Outcome = within_budget ),
+          error(resource_error(hash_consing_store), _),
+          Outcome = raised),
+    thread_send_message(Main, outcome(Outcome)).
+
+:- begin_tests(store, [timeout(1)]).
+
+%   A new term adds one Id to the store and its nodes to the trie; a term
+%   interned again adds nothing.
+test(a_new_term_adds_one_id) :-
+    declared([counted_in_the_store(_)]),
+    store_property(ids(Before)),
+    intern(counted_in_the_store(1), Id),
+    intern(counted_in_the_store(1), Again),
+    store_property(ids(After)),
+    store_property(nodes(Nodes)),
+    store_property(bytes(Bytes)),
+    Again == Id,
+    After =:= Before + 1,
+    Nodes >= After,
+    Bytes > 0.
+
+%   A thread that installed nothing reads the Id another thread made.
+test(another_thread_reads_an_id_without_installing) :-
+    declared([read_by_another_thread(_)]),
+    intern(read_by_another_thread(1), Id),
+    thread_create(( intern(Term, Id), Term == read_by_another_thread(1) ), Thread, []),
+    thread_join(Thread, Status),
+    Status == true.
+
+%   The error for a constructor with no templates names declared/1.
+test(the_missing_templates_message_names_declared,
+     [true(sub_string(Text, _, _, _, "hash_consing:declared/1"))]) :-
+    catch(intern(no_templates_anywhere(1), _), Error, true),
+    message_text(Error, Text).
+
+%   message_text(+Message, -Text): the text print_message/2 would print.
+message_text(Message, Text) :-
+    '$messages':translate_message(Message, Lines, []),
+    with_output_to(string(Text), print_message_lines(current_output, '', Lines)).
+
+%   A store past its limit raises a resource error on the next insertion and
+%   still answers the terms it holds.
+test(a_store_past_its_limit_raises) :-
+    declared([bounded_in_the_store(_)]),
+    intern(bounded_in_the_store(0), Held),
+    store_property(bytes(Bytes)),
+    Limit is Bytes - 1,
+    setup_call_cleanup(
+        set_prolog_flag(hash_consing_store_limit, Limit),
+        ( catch(( intern(bounded_in_the_store(1), _), Raised = false ),
+                error(resource_error(hash_consing_store), _),
+                Raised = true),
+          intern(bounded_in_the_store(0), Again) ),
+        set_prolog_flag(hash_consing_store_limit, infinite)),
+    Raised == true,
+    Again == Held.
+
+%   A thread whose budget is spent raises on its next insertion; a term
+%   already in the store is still read, and other threads are not bounded.
+
+test(a_thread_past_its_growth_budget_raises) :-
+    declared([grown_by_one_thread(_)]),
+    thread_self(Main),
+    thread_create(budget_spent_by_this_thread(Main), Thread, []),
+    thread_join(Thread, true),
+    thread_get_message(outcome(Outcome)),
+    Outcome == raised,
+    intern(grown_by_one_thread(1000), _).
+
+%   Two threads share the store; the first sets a budget, the second has
+%   none. The second inserts 2000 terms between two halves of the first's
+%   insertions, and the first's budget, room for its own terms only, is not
+%   charged with them.
+
+test(parallel_threads_do_not_charge_each_other) :-
+    declared([grown_in_parallel(_, _)]),
+    numlist(1, 50, Numbers),
+    store_property(bytes(BytesBefore)),
+    maplist(grown_in_parallel_interned(measured), Numbers),
+    store_property(bytes(BytesAfter)),
+    Budget is 2 * (BytesAfter - BytesBefore),
+    thread_self(Main),
+    thread_create(budgeted_halves(Main, Budget, Numbers), Budgeted, []),
+    thread_get_message(first_half_interned),
+    thread_create(forall(between(1, 2000, Number),
+                         grown_in_parallel_interned(unbudgeted, Number)),
+                  Unbudgeted, []),
+    thread_join(Unbudgeted, true),
+    thread_send_message(Budgeted, go_on),
+    thread_join(Budgeted, true),
+    thread_get_message(outcome(Outcome)),
+    Outcome == within_budget.
+
+%   A thread created by a thread with a budget inherits the budget with a
+%   count of its own from zero, as it inherits `stack_limit`.
+
+test(a_new_thread_inherits_the_budget_with_its_own_count) :-
+    declared([grown_by_an_inheriting_thread(_)]),
+    thread_self(Main),
+    thread_create(budget_inherited(Main), Thread, []),
+    thread_join(Thread, true),
+    thread_get_message(outcome(Outcome)),
+    Outcome == raised.
+
+:- end_tests(store).
