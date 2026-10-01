@@ -5,7 +5,10 @@
             externalized/2,         % +TermWithIds, -External
             internalized/3,         % +Templates, +External, -TermWithIds
             declared/1,             % +Templates
-            rewritten/1             % +Templates
+            rewritten/1,            % +Templates
+            rewritten/2,            % +Templates, +Options
+            store_property/1,       % ?Property
+            store_growth_bounded/1  % +Bytes
           ]).
 
 /** <module> hash_consing: hash-consed terms selected by templates, whose Ids record a shape, and a term rewrite that makes a program use them
@@ -182,6 +185,14 @@ program whose constructors are made at run time. `is_id/1` tells an Id from
 any other value. `represented(?Layer, ?Representation)` relates one layer, a
 constructor applied to represented arguments, to its representation.
 
+A LAYER POSITION holds a layer, not a representation: in a file that opts
+in, the term written there keeps its own constructor as a plain term and
+only its arguments are rewritten. The first argument of `represented/2` is
+one; `rewritten/2`'s option `layer_arguments` names more, in the heads and
+goals of the file, for a predicate of a module that does not opt in and
+hands out or takes the plain layer of a listed constructor (a reader of one
+layer). A variable there stays a variable.
+
 `:- hash_consing:rewritten(Templates).` OPTS A FILE IN (user ruling,
 2026-09-17: opt-in per file, the constructors passed to the directive, no
 setting). It declares the templates as `declared/1` does, and every clause
@@ -242,7 +253,9 @@ THE REWRITE OF A CLAUSE:
                still undecided), call, and then settle every occurrence top
                down (a lookup when the call bound the Id, an insertion when
                it made the term ground, an instantiation error when
-               neither)
+               neither). An Id occurrence over variables that occur once in
+               the clause is unread: its Id pattern alone is passed, and
+               after the call only its handle is checked
     ground     an occurrence that is ground in the source is represented
                while the file loads, and its Id or its layer is written into
                the clause
@@ -272,16 +285,38 @@ position. Using an Id as an
 opaque key, whose result does not depend on the order (an assoc key, a sort
 to remove duplicates), is fine.
 
-THREADS SHARE THE STORE WHEN THEY INSTALL IT. The store and the spellings
-of the shapes are tries in two global variables of the thread that loaded
-this module, `hash_consing_store` and `hash_consing_spellings`, and a
-thread made later starts without them; a thread that sets both to the
-loading thread's tries (read there with `nb_getval/2`, set with
-`nb_setval/2`) declares, interns and looks up alongside the others, with
-the answers one thread would give. A lookup that finds its key takes no
-lock. A declaration, an insertion into the store and a new spelling each
-take a mutex (`hash_consing_templates`, `hash_consing_store`,
-`hash_consing_spellings`) and look again under it before they write.
+THE STORE BELONGS TO THE PROCESS. The store and the spellings of the shapes
+are two tries made when this module is first loaded and kept in the fact
+`process_stores/2`, so every thread and every engine interns into the same
+store and reads the same Ids, with nothing to install. Reloading the module
+keeps them. A lookup that finds its key with its handle written back takes no
+lock; every write to the store, a value still `pending` settled included, is
+made under a mutex. The Prolog flag `hash_consing_store_limit`, `infinite`
+by default, bounds the bytes of the store: an insertion that would grow it
+past the limit raises `resource_error(hash_consing_store)`, the way the
+stack and table limits do, and the store stays as it was.
+`store_growth_bounded/1` bounds instead what one thread adds to the store
+from the call on, the way the stack and table limits bound one thread, so a
+thread that shares the store with others, or finds it already full of what
+earlier work interned, is charged with its own insertions only. A
+declaration, an insertion into the store and a new spelling each take a mutex
+(`hash_consing_templates`, `hash_consing_store`, `hash_consing_spellings`)
+and look again under it before they write. `store_property/1` reads the size
+of the store.
+
+AN ID IS NEVER FREED NOR REUSED. The store only grows: an Id stays valid, and
+stands for the same term, until the process ends. Two Ids are `==` exactly
+when the terms they stand for are `==`, so an Id is a key of its term.
+
+AN INTERNED TERM IS A VALUE, NOT A CELL. `intern/2` stores a copy of the
+term as it is at the call: a later `setarg/3` or `nb_setarg/3` on the term
+that was interned, or on a layer read back from an Id, changes that copy
+only, never the store, and interning the old value again answers the same
+Id. So a mutable cell (a thunk, a memory cell updated in place) must stay
+outside the store; interning it freezes its value at that moment. An Id
+itself must never be mutated: an Id whose handle is set to another Id's
+handle is that other Id, and one set to any other integer crashes the
+process (the FIXME below on `trie_term/2`).
 
 THIS MODULE REFLECTS ON SOURCE CLAUSES with `=..` while a file loads, a
 mechanical boundary; nothing here chooses behaviour at run time by
@@ -295,8 +330,7 @@ the benchmark raise instead, at the costs recorded there.
 
 FIXME: an Id written into a clause while the file loads
 is a handle of this process. A file must be loaded from source, never
-`qcompile`d nor saved in a state, and a thread reads such an Id only after it
-installs the loading thread's store (THREADS SHARE THE STORE, above).
+`qcompile`d nor saved in a state.
 
 FIXME: a file that uses a constructor another file
 interns, without listing it, passes its instances uninterned; the rewritten
@@ -311,14 +345,34 @@ not check it; one directive shared by `include/1` (above) avoids it.
 
 %!  stores_created
 %
-%   The store and the spellings of the shapes, two tries in global variables
-%   of the loading thread.
+%   The store and the spellings of the shapes, two tries of the process,
+%   made unless an earlier load of this module made them.
+
+:- dynamic process_stores/2.
 
 stores_created :-
-    trie_new(Store),
-    nb_setval(hash_consing_store, Store),
-    trie_new(Spellings),
-    nb_setval(hash_consing_spellings, Spellings).
+    (   process_stores(_, _)
+    ->  true
+    ;   trie_new(Store),
+        trie_new(Spellings),
+        assertz(process_stores(Store, Spellings))
+    ).
+
+%!  store_property(?Property) is nondet.
+%
+%   A property of the store: `ids(Count)`, the number of terms interned;
+%   `nodes(Count)`, the number of nodes of its trie; `bytes(Bytes)`, the
+%   memory the trie takes. The spellings of the shapes are not counted.
+
+store_property(ids(Count)) :-
+    process_stores(Store, _),
+    trie_property(Store, value_count(Count)).
+store_property(nodes(Count)) :-
+    process_stores(Store, _),
+    trie_property(Store, node_count(Count)).
+store_property(bytes(Bytes)) :-
+    process_stores(Store, _),
+    trie_property(Store, size(Bytes)).
 
 %   ---- the relation ----
 
@@ -344,19 +398,44 @@ intern(Term, Id) :-
 %   stored, and answer its Id; fail, inserting nothing, when none does.
 
 upserted(Term, Id) :-
+    process_stores(Trie, _),
+    trie_lookup(Trie, Term, Handle),
+    Handle \== pending,
+    !,
+    stored_id(Term, Handle, Id).
+upserted(Term, Id) :-
     (   ground(Term)
     ->  true
     ;   throw(error(instantiation_error, context(hash_consing:intern/2, Term-Id)))
     ),
     functor(Term, Name, Arity),
     templates_known(Name, Arity, hash_consing:intern/2, Templates, Kind),
-    first_template_recorded(Templates, Term, Structure),
-    nb_getval(hash_consing_store, Trie),
-    (   trie_lookup(Trie, Term, Found)
-    ->  settled_handle(Trie, Term, Found, Handle)
+    (   Kind == root_only
+    ->  true
+    ;   first_template_recorded(Templates, Term, Structure)
+    ),
+    process_stores(Trie, _),
+    (   trie_lookup(Trie, Term, Found),
+        Found \== pending
+    ->  Handle = Found
     ;   with_mutex(hash_consing_store, handle_inserted(Trie, Term, Handle))
     ),
     id_built(Name, Arity, Kind, Structure, Handle, Id).
+
+%   stored_id(+Term, +Handle, ?Id): the Id of a term found in the store
+%   with its handle written back. A stored term is ground and was declared,
+%   and the first template that matched it when it was inserted still does,
+%   so only the shape is computed again.
+
+stored_id(Term, Handle, Id) :-
+    functor(Term, Name, Arity),
+    constructor_templates(Name, Arity, Templates, Kind),
+    (   Kind == root_only
+    ->  known_id_name(Name, Arity, IdName),
+        compound_name_arguments(Id, IdName, [Handle])
+    ;   first_template_recorded(Templates, Term, Structure),
+        id_built(Name, Arity, Kind, Structure, Handle, Id)
+    ).
 
 %   handle_inserted(+Trie, +Term, -Handle): Term looked up again and, when it
 %   is still absent, inserted, under the mutex `hash_consing_store`. Two
@@ -364,12 +443,145 @@ upserted(Term, Id) :-
 %   insert it, and the second trie_insert/4 raises
 %   `permission_error(modify, trie_key, Term)` (measured 2026-09-30: eight
 %   threads interning the same 20000 terms raised in 5 of 5 runs). A lookup
-%   that finds Term takes no mutex.
+%   that finds Term with its handle written back takes no mutex; a value
+%   still `pending`, written by an insertion in progress in another thread or
+%   left by an interrupted one, is settled here, under the mutex, so that only
+%   the thread holding it writes to the store.
 
 handle_inserted(Trie, Term, Handle) :-
     (   trie_lookup(Trie, Term, Found)
     ->  settled_handle(Trie, Term, Found, Handle)
-    ;   sig_atomic(inserted(Trie, Term, Handle))
+    ;   store_within_limit(Trie),
+        thread_growth_within_budget(Trie),
+        trie_property(Trie, node_count(NodesBefore)),
+        sig_atomic(inserted(Trie, Term, Handle)),
+        thread_growth_counted(Trie, NodesBefore)
+    ).
+
+%!  store_within_limit(+Trie)
+%
+%   Raises `resource_error(hash_consing_store)` when the Prolog flag
+%   `hash_consing_store_limit` is a number of bytes and the store takes more.
+%   Measuring the bytes walks the whole trie (20 ms at 200,000 terms,
+%   measured 2026-10-01), its node count does not, so the bytes are
+%   estimated from the node count and the bytes per node of the last
+%   measurement, and measured again only when the estimate passes the limit
+%   or the nodes have doubled since; only a measurement raises.
+
+:- create_prolog_flag(hash_consing_store_limit, infinite, [type(term), keep(true)]).
+
+store_within_limit(Trie) :-
+    current_prolog_flag(hash_consing_store_limit, Limit),
+    (   Limit == infinite
+    ->  true
+    ;   must_be(positive_integer, Limit),
+        trie_property(Trie, node_count(Nodes)),
+        bytes_per_node(Trie, Nodes, MeasuredNodes, MeasuredBytes),
+        (   Nodes * MeasuredBytes =< Limit * MeasuredNodes
+        ->  true
+        ;   trie_property(Trie, size(Bytes)),
+            flag(hash_consing_measured_nodes, _, Nodes),
+            flag(hash_consing_measured_bytes, _, Bytes),
+            (   Bytes > Limit
+            ->  format(atom(Measured), 'the store takes ~D bytes, the limit is ~D', [Bytes, Limit]),
+                throw(error(resource_error(hash_consing_store),
+                            context(hash_consing:intern/2, Measured)))
+            ;   true
+            )
+        )
+    ).
+
+%   bytes_per_node(+Trie, +Nodes, -MeasuredNodes, -MeasuredBytes): the nodes
+%   and bytes of the last measurement of the store, measured again when
+%   there is none or the nodes have doubled since; their ratio estimates the
+%   bytes of a node.
+
+bytes_per_node(Trie, Nodes, MeasuredNodes, MeasuredBytes) :-
+    flag(hash_consing_measured_nodes, KnownNodes, KnownNodes),
+    flag(hash_consing_measured_bytes, KnownBytes, KnownBytes),
+    (   KnownNodes > 0,
+        Nodes < 2 * KnownNodes
+    ->  MeasuredNodes = KnownNodes,
+        MeasuredBytes = KnownBytes
+    ;   trie_property(Trie, size(Bytes)),
+        MeasuredNodes is max(Nodes, 1),
+        MeasuredBytes = Bytes,
+        flag(hash_consing_measured_nodes, _, MeasuredNodes),
+        flag(hash_consing_measured_bytes, _, MeasuredBytes)
+    ).
+
+%!  store_growth_bounded(+Bytes)
+%
+%   From now on, this thread may grow the store by Bytes at most; `infinite`
+%   lifts the bound. Once the nodes this thread inserted since the call take
+%   more than Bytes, its next insertion raises
+%   `error(resource_error(hash_consing_store), context(hash_consing:intern/2,
+%   Message))`, Message stating the bytes added and the budget, the error
+%   the flag `hash_consing_store_limit` raises. A term already in the store
+%   costs nothing: interning it again adds no node, is not counted, and is
+%   answered even past the budget. Only this thread's own insertions
+%   count, measured as the nodes each one adds under the store's mutex, so
+%   threads that share the store do not charge each other, and what the
+%   store held before the call does not count. A thread created later inherits the bound with a count
+%   of its own from zero, as it inherits `stack_limit` and `table_space`.
+%   Bytes are estimated from the nodes as for the flag
+%   `hash_consing_store_limit`. The bound lives in the Prolog flag
+%   `hash_consing_growth_budget`.
+
+:- create_prolog_flag(hash_consing_growth_budget, infinite, [type(term), keep(true)]).
+
+store_growth_bounded(Bytes) :-
+    (   Bytes == infinite
+    ->  true
+    ;   must_be(positive_integer, Bytes)
+    ),
+    set_prolog_flag(hash_consing_growth_budget, Bytes),
+    nb_setval(hash_consing_growth_added, 0).
+
+%   thread_growth_within_budget(+Trie): the nodes this thread inserted since
+%   its budget was set take no more than the budget.
+
+thread_growth_within_budget(Trie) :-
+    current_prolog_flag(hash_consing_growth_budget, Bytes),
+    (   Bytes == infinite
+    ->  true
+    ;   thread_growth_added(Added),
+        trie_property(Trie, node_count(Nodes)),
+        bytes_per_node(Trie, Nodes, MeasuredNodes, MeasuredBytes),
+        (   Added * MeasuredBytes =< Bytes * MeasuredNodes
+        ->  true
+        ;   Spent is Added * MeasuredBytes // MeasuredNodes,
+            format(atom(Measured),
+                   'this thread grew the store by about ~D bytes, its budget is ~D',
+                   [Spent, Bytes]),
+            throw(error(resource_error(hash_consing_store),
+                        context(hash_consing:intern/2, Measured)))
+        )
+    ).
+
+%   thread_growth_added(-Added): the nodes this thread inserted since its
+%   budget was set; zero in a thread that inherited the budget and has not
+%   inserted yet.
+
+thread_growth_added(Added) :-
+    (   nb_current(hash_consing_growth_added, Added)
+    ->  true
+    ;   Added = 0
+    ).
+
+%   thread_growth_counted(+Trie, +NodesBefore): the nodes the insertion just
+%   made, the store's nodes now less NodesBefore, added to this thread's
+%   count when it has a budget. Called under the store's mutex, right after
+%   the insertion, so no other thread's nodes are counted.
+
+thread_growth_counted(Trie, NodesBefore) :-
+    current_prolog_flag(hash_consing_growth_budget, Bytes),
+    (   Bytes == infinite
+    ->  true
+    ;   thread_growth_added(AddedBefore),
+        trie_property(Trie, node_count(Nodes)),
+        Added is AddedBefore + Nodes - NodesBefore,
+        nb_setval(hash_consing_growth_added, Added)
     ).
 
 %   inserted(+Trie, +Term, -Handle): the insertion and the write-back of the
@@ -442,6 +654,13 @@ represented(Layer, Representation) :-
         Class == must_not_intern
     ).
 
+representation_made(_, _, _, _, Layer, Representation) :-
+    ground(Layer),
+    !,
+    (   upserted(Layer, Id)
+    ->  Representation = Id
+    ;   Representation = Layer
+    ).
 representation_made(Templates, Kind, Name, Arity, Layer, Representation) :-
     value_classified(Templates, Layer, Class, Structure),
     (   Class == must_intern
@@ -471,10 +690,15 @@ represented_settled(Layer, Representation) :-
 %!  is_id(+Value)
 %
 %   Value is an Id: an Id functor this process made, applied to a bound
-%   handle.
+%   handle. The handle is the last argument of both Id arities, so the test
+%   reads it directly instead of through id_parts/4: lambda_jit's
+%   term_weight.pl calls it once per node it weighs.
 
 is_id(Value) :-
-    id_parts(Value, _, _, Handle),
+    compound(Value),
+    compound_name_arity(Value, IdName, Arity),
+    id_constructor(IdName, _, _),
+    arg(Arity, Value, Handle),
     nonvar(Handle).
 
 %!  id_parts(+Value, -IdName, -Shape, -Handle)
@@ -939,7 +1163,7 @@ value_view(_, other).
 %   it is built once.
 
 structure_spelled(Structure, Atom) :-
-    nb_getval(hash_consing_spellings, Spellings),
+    process_stores(_, Spellings),
     (   trie_lookup(Spellings, Structure, Known)
     ->  Atom = Known
     ;   with_mutex(hash_consing_spellings, spelling_inserted(Spellings, Structure, Atom))
@@ -1056,7 +1280,10 @@ arguments_internalized([Argument | Arguments], Indicators, [Internal | Internals
 instance_internalized(Name/Arity, Constructors, Layer, Internal) :-
     (   memberchk(Name/Arity, Constructors)
     ->  (   ground(Layer)
-        ->  represented(Layer, Internal)
+        ->  (   upserted(Layer, Id)
+            ->  Internal = Id
+            ;   Internal = Layer
+            )
         ;   constructor_templates(Name, Arity, Templates, _),
             value_classified(Templates, Layer, Class, _),
             (   Class == must_not_intern
@@ -1072,18 +1299,96 @@ instance_internalized(Name/Arity, Constructors, Layer, Internal) :-
 %!  rewritten(+Templates)
 %
 %   The file being loaded opts in for the constructors whose templates are in
-%   the list; several calls add up.
+%   the list; several calls add up. The same as `rewritten(Templates, [])`.
+
+%!  rewritten(+Templates, +Options)
+%
+%   rewritten/1 with Options, of which there is one:
+%
+%     - layer_arguments(Skeletons)
+%       Each skeleton is a head or goal, `Name(A1, ..., An)`, with the atom
+%       `layer` at the argument positions that hold a LAYER and `_`
+%       elsewhere. In every head and body goal of the file with that name
+%       and arity, the term at a layer position keeps its own constructor as
+%       written, a plain term, and only its arguments are rewritten, as
+%       hash_consing:represented/2 reads its first argument. This is how a
+%       file that opts in calls a predicate of a file that does not, one
+%       that hands out or takes the plain layer of a listed constructor.
 
 :- dynamic registered_constructor/3.     % registered_constructor(SourceFile, Name, Arity)
+:- dynamic registered_layer_positions/4. % registered_layer_positions(SourceFile, Name, Arity, Positions)
 
 rewritten(Templates) :-
+    rewritten_with_options(Templates, [], hash_consing:rewritten/1).
+
+rewritten(Templates, Options) :-
+    rewritten_with_options(Templates, Options, hash_consing:rewritten/2).
+
+rewritten_with_options(Templates, Options, Context) :-
     must_be(list, Templates),
+    must_be(list, Options),
+    options_checked(Options, Context, Layered),
     (   prolog_load_context(source, File)
     ->  true
-    ;   throw(error(context_error(nodirective, hash_consing:rewritten/1), _))
+    ;   throw(error(context_error(nodirective, Context), _))
     ),
-    templates_declared(Templates, hash_consing:rewritten/1, Constructors),
-    constructors_registered(Constructors, File).
+    templates_declared(Templates, Context, Constructors),
+    constructors_registered(Constructors, File),
+    layered_registered(Layered, File, Context).
+
+options_checked([], _, []).
+options_checked([Option | Options], Context, Layered) :-
+    (   Option = layer_arguments(Skeletons),
+        is_list(Skeletons)
+    ->  skeletons_read(Skeletons, Context, Layered, Rest),
+        options_checked(Options, Context, Rest)
+    ;   throw(error(domain_error(rewritten_option, Option), context(Context, _)))
+    ).
+
+%   skeletons_read(+Skeletons, +Context, -Layered, ?Rest): each skeleton
+%   read as `layered(Name, Arity, Positions)`, its layer positions, in front
+%   of Rest.
+
+skeletons_read([], _, Rest, Rest).
+skeletons_read([Skeleton | Skeletons], Context, [layered(Name, Arity, Positions) | Layered], Rest) :-
+    (   compound(Skeleton),
+        compound_name_arguments(Skeleton, Name, Arguments),
+        layer_markers(Arguments, 1, Positions),
+        Positions \== []
+    ->  length(Arguments, Arity)
+    ;   throw(error(domain_error(layer_skeleton, Skeleton), context(Context, _)))
+    ),
+    skeletons_read(Skeletons, Context, Layered, Rest).
+
+%   layered_registered(+Layered, +File, +Context): the layer positions
+%   recorded for File; a second skeleton of the same name and arity in one
+%   file must give the same positions.
+
+layered_registered([], _, _).
+layered_registered([layered(Name, Arity, Positions) | Layered], File, Context) :-
+    (   registered_layer_positions(File, Name, Arity, Known)
+    ->  (   Known == Positions
+        ->  true
+        ;   throw(error(permission_error(reconfigure, layer_arguments, Name/Arity),
+                        context(Context, _)))
+        )
+    ;   assertz(registered_layer_positions(File, Name, Arity, Positions))
+    ),
+    layered_registered(Layered, File, Context).
+
+%   layer_markers(+Arguments, +Position, -Positions): the positions, from
+%   Position on, of the arguments that are the atom `layer`; any other
+%   argument must be a variable.
+
+layer_markers([], _, []).
+layer_markers([Argument | Arguments], Position, Positions) :-
+    Next is Position + 1,
+    (   Argument == layer
+    ->  Positions = [Position | Rest]
+    ;   var(Argument)
+    ->  Positions = Rest
+    ),
+    layer_markers(Arguments, Next, Rest).
 
 constructors_registered([], _).
 constructors_registered([Name/Arity | Constructors], File) :-
@@ -1109,6 +1414,7 @@ source_rewritten(end_of_file, _) :-
     prolog_load_context(source, File),
     prolog_load_context(file, File),
     retractall(registered_constructor(File, _, _)),
+    retractall(registered_layer_positions(File, _, _, _)),
     fail.
 source_rewritten((:- _), _) :-
     !,
@@ -1144,14 +1450,17 @@ rule_rewritten(Head0, Body0, File, (Head :- Body)) :-
     plain_rule_rewritten(Head0, Body0, File, Head, Body).
 
 plain_rule_rewritten(Head0, Body0, File, Head, Body) :-
-    arguments_of_abstracted(Head0, File, Head, Occurrences),
-    body_rewritten(Body0, File, RewrittenBody),
-    head_scheduled(Occurrences, RewrittenBody, Body).
+    file_layer_positions(Head0, File, Positions),
+    arguments_of_abstracted(Head0, Positions, File, Head, Occurrences),
+    term_singletons(Head0-Body0, Singletons),
+    body_rewritten(Body0, rewriting(File, Singletons), RewrittenBody),
+    head_scheduled(Occurrences, Head-RewrittenBody, RewrittenBody, Body).
 
-%!  arguments_of_abstracted(+Callable0, +File, -Callable, -Occurrences)
+%!  arguments_of_abstracted(+Callable0, +LayerPositions, +File, -Callable, -Occurrences)
 %
 %   The arguments of a head or a goal abstracted (its own functor is a
-%   predicate and is left alone), the ground occurrences represented now, and
+%   predicate and is left alone; an argument at one of LayerPositions keeps
+%   its own constructor), the ground occurrences represented now, and
 %   the others listed bottom up as
 %   `occurrence(Class, Layer, Representation, Handle)`: Class `id` for an
 %   occurrence that must be interned, its Representation an Id pattern and
@@ -1160,15 +1469,52 @@ plain_rule_rewritten(Head0, Body0, File, Head, Body) :-
 %   written where it stood. An occurrence that must not be interned is its
 %   layer, written in place, and is not listed.
 
-arguments_of_abstracted(Callable0, File, Callable, Occurrences) :-
+arguments_of_abstracted(Callable0, LayerPositions, File, Callable, Occurrences) :-
     compound(Callable0),
     !,
     compound_name_arguments(Callable0, Name, Arguments0),
-    arguments_abstracted(Arguments0, File, Arguments, [], Reversed),
+    positioned_arguments_abstracted(Arguments0, 1, LayerPositions, File, Arguments, [], Reversed),
     compound_name_arguments(Callable, Name, Arguments),
     reverse(Reversed, BottomUp),
     occurrences_baked(BottomUp, Occurrences).
-arguments_of_abstracted(Callable, _, Callable, []).
+arguments_of_abstracted(Callable, _, _, Callable, []).
+
+%   file_layer_positions(+Callable, +File, -Positions): the layer positions
+%   File registered for Callable's name and arity (rewritten/2), none when
+%   it registered none.
+
+file_layer_positions(Callable, File, Positions) :-
+    (   compound(Callable),
+        compound_name_arity(Callable, Name, Arity),
+        registered_layer_positions(File, Name, Arity, Registered)
+    ->  Positions = Registered
+    ;   Positions = []
+    ).
+
+%   positioned_arguments_abstracted(+Arguments0, +Position, +LayerPositions,
+%   +File, -Arguments, +Reversed0, -Reversed): arguments_abstracted/5, the
+%   argument at a layer position kept as a plain layer: its own
+%   constructor as written, its arguments abstracted.
+
+positioned_arguments_abstracted([], _, _, _, [], Reversed, Reversed).
+positioned_arguments_abstracted([Argument0 | Arguments0], Position, LayerPositions, File,
+                                [Argument | Arguments], Reversed0, Reversed) :-
+    (   memberchk(Position, LayerPositions)
+    ->  layer_abstracted(Argument0, File, Argument, Reversed0, Reversed1)
+    ;   abstracted(Argument0, File, Argument, Reversed0, Reversed1)
+    ),
+    Next is Position + 1,
+    positioned_arguments_abstracted(Arguments0, Next, LayerPositions, File,
+                                    Arguments, Reversed1, Reversed).
+
+layer_abstracted(Layer0, File, Layer, Reversed0, Reversed) :-
+    (   compound(Layer0)
+    ->  compound_name_arguments(Layer0, Name, Arguments0),
+        arguments_abstracted(Arguments0, File, Arguments, Reversed0, Reversed),
+        compound_name_arguments(Layer, Name, Arguments)
+    ;   Layer = Layer0,
+        Reversed = Reversed0
+    ).
 
 arguments_abstracted([], _, [], Reversed, Reversed).
 arguments_abstracted([Argument0 | Arguments0], File, [Argument | Arguments], Reversed0, Reversed) :-
@@ -1242,17 +1588,20 @@ occurrence_represented_now(id, Layer, Id) :-
 occurrence_represented_now(undetermined(_), Layer, Variable) :-
     represented(Layer, Variable).
 
-%!  head_scheduled(+BottomUp, +Body0, -Body)
+%!  head_scheduled(+BottomUp, +Clause, +Body0, -Body)
 %
-%   The head row of THE REWRITE OF A CLAUSE (above).
+%   The head row of THE REWRITE OF A CLAUSE (above). Clause is the
+%   rewritten head paired with Body0, read only to find the occurrences whose
+%   layer nothing reads.
 
-head_scheduled([], Body, Body) :-
+head_scheduled([], _, Body, Body) :-
     !.
-head_scheduled(BottomUp, Body0, (Condition -> Fast ; General)) :-
+head_scheduled(BottomUp, Clause, Body0, (Condition -> Fast ; General)) :-
     reverse(BottomUp, TopDown),
     top_level_occurrences(BottomUp, BottomUp, TopLevel),
     occurrences_given(TopLevel, Condition),
-    occurrences_goal(TopDown, related, Lookups),
+    occurrences_read(TopDown, Clause-BottomUp, Read),
+    occurrences_goal(Read, related, Lookups),
     occurrences_goal(TopDown, related_if_given, Settled),
     occurrences_goal(BottomUp, represented_if_ground, Inserted),
     occurrences_goal(BottomUp, settled_unless_given, Finished),
@@ -1280,6 +1629,56 @@ kept_conjoined([Goal], Goal) :-
     !.
 kept_conjoined([Goal | Goals], (Goal, Conjunction)) :-
     kept_conjoined(Goals, Conjunction).
+
+%   occurrences_read(+Occurrences, +Clause, -Read): the occurrences whose
+%   layer the clause reads. A given Id's layer is looked up only to bind the
+%   layer's arguments; an Id occurrence whose layer is its constructor over
+%   variables that occur nowhere else in Clause (the head, the body and the
+%   layers of the listed occurrences) binds nothing anyone reads, and is left
+%   out of the fast path. Its Id pattern in the head already selects the
+%   constructor and the shape. Every other occurrence is kept.
+
+occurrences_read(Occurrences, Clause, Read) :-
+    variables_occurring_more_than_once(Clause, Shared),
+    occurrences_kept_when_read(Occurrences, Shared, Read).
+
+occurrences_kept_when_read([], _, []).
+occurrences_kept_when_read([Occurrence | Occurrences], Shared, Read) :-
+    (   Occurrence = occurrence(id, Layer, _, _),
+        layer_arguments(Layer, Arguments),
+        unread_arguments(Arguments, Shared)
+    ->  Read = Rest
+    ;   Read = [Occurrence | Rest]
+    ),
+    occurrences_kept_when_read(Occurrences, Shared, Rest).
+
+layer_arguments(Layer, Arguments) :-
+    (   atom(Layer)
+    ->  Arguments = []
+    ;   compound_name_arguments(Layer, _, Arguments)
+    ).
+
+unread_arguments([], _).
+unread_arguments([Argument | Arguments], Shared) :-
+    var(Argument),
+    \+ variable_member(Argument, Shared),
+    unread_arguments(Arguments, Shared).
+
+%   variables_occurring_more_than_once(+Term, -Shared): the variables of Term
+%   that occur in it more than once.
+
+variables_occurring_more_than_once(Term, Shared) :-
+    term_singletons(Term, Singletons),
+    term_variables(Term, Variables),
+    variables_not_in(Variables, Singletons, Shared).
+
+variables_not_in([], _, []).
+variables_not_in([Variable | Variables], Excluded, Kept) :-
+    (   variable_member(Variable, Excluded)
+    ->  Kept = Rest
+    ;   Kept = [Variable | Rest]
+    ),
+    variables_not_in(Variables, Excluded, Rest).
 
 %   An occurrence is at the top when its handle is in the layer of no other
 %   listed occurrence; the layer of an occurrence that must not be interned
@@ -1375,7 +1774,10 @@ occurrence_goal(represented_before_call, occurrence(id, Layer, Id, _),
 occurrence_goal(represented_before_call, occurrence(undetermined(_), Layer, Variable, _),
                 hash_consing:represented(Layer, Variable)).
 
-%!  body_rewritten(+Body0, +File, -Body)
+%!  body_rewritten(+Body0, +Context, -Body)
+%
+%   Context is `rewriting(File, Singletons)`, Singletons the variables that
+%   occur once in the source clause.
 %
 %   The control constructs rewritten inside, every other goal by
 %   `goal_rewritten/3`.
@@ -1383,54 +1785,134 @@ occurrence_goal(represented_before_call, occurrence(undetermined(_), Layer, Vari
 body_rewritten(Goal, _, Goal) :-
     var(Goal),
     !.
-body_rewritten((Left0, Right0), File, (Left, Right)) :-
+body_rewritten((Left0, Right0), Context, (Left, Right)) :-
     !,
-    body_rewritten(Left0, File, Left),
-    body_rewritten(Right0, File, Right).
-body_rewritten((Left0 ; Right0), File, (Left ; Right)) :-
+    body_rewritten(Left0, Context, Left),
+    body_rewritten(Right0, Context, Right).
+body_rewritten((Left0 ; Right0), Context, (Left ; Right)) :-
     !,
-    body_rewritten(Left0, File, Left),
-    body_rewritten(Right0, File, Right).
-body_rewritten((Condition0 -> Then0), File, (Condition -> Then)) :-
+    body_rewritten(Left0, Context, Left),
+    body_rewritten(Right0, Context, Right).
+body_rewritten((Condition0 -> Then0), Context, (Condition -> Then)) :-
     !,
-    body_rewritten(Condition0, File, Condition),
-    body_rewritten(Then0, File, Then).
-body_rewritten((Condition0 *-> Then0), File, (Condition *-> Then)) :-
+    body_rewritten(Condition0, Context, Condition),
+    body_rewritten(Then0, Context, Then).
+body_rewritten((Condition0 *-> Then0), Context, (Condition *-> Then)) :-
     !,
-    body_rewritten(Condition0, File, Condition),
-    body_rewritten(Then0, File, Then).
-body_rewritten(\+ Goal0, File, \+ Goal) :-
+    body_rewritten(Condition0, Context, Condition),
+    body_rewritten(Then0, Context, Then).
+body_rewritten(\+ Goal0, Context, \+ Goal) :-
     !,
-    body_rewritten(Goal0, File, Goal).
-body_rewritten(call(Goal0), File, call(Goal)) :-
+    body_rewritten(Goal0, Context, Goal).
+body_rewritten(call(Goal0), Context, call(Goal)) :-
     !,
-    body_rewritten(Goal0, File, Goal).
-body_rewritten(forall(Condition0, Action0), File, forall(Condition, Action)) :-
+    body_rewritten(Goal0, Context, Goal).
+body_rewritten(forall(Condition0, Action0), Context, forall(Condition, Action)) :-
     !,
-    body_rewritten(Condition0, File, Condition),
-    body_rewritten(Action0, File, Action).
-body_rewritten(findall(Template, Goal0, Result), File, findall(Template, Goal, Result)) :-
+    body_rewritten(Condition0, Context, Condition),
+    body_rewritten(Action0, Context, Action).
+body_rewritten(findall(Template, Goal0, Result), Context, findall(Template, Goal, Result)) :-
     !,
+    context_file(Context, File),
     listed_absent(Template-Result, File, findall_template_or_result),
-    body_rewritten(Goal0, File, Goal).
-body_rewritten(catch(Goal0, Catcher, Recovery0), File, catch(Goal, Catcher, Recovery)) :-
+    body_rewritten(Goal0, Context, Goal).
+body_rewritten(catch(Goal0, Catcher, Recovery0), Context, catch(Goal, Catcher, Recovery)) :-
     !,
+    context_file(Context, File),
     listed_absent(Catcher, File, catch_catcher),
-    body_rewritten(Goal0, File, Goal),
-    body_rewritten(Recovery0, File, Recovery).
-body_rewritten(Qualifier:Goal0, File, Qualifier:Goal) :-
+    body_rewritten(Goal0, Context, Goal),
+    body_rewritten(Recovery0, Context, Recovery).
+body_rewritten(hash_consing:Goal0, Context, hash_consing:Goal) :-
+    templates_first(Goal0),
     !,
-    body_rewritten(Goal0, File, Goal).
-body_rewritten(Goal0, File, Goal) :-
-    goal_rewritten(Goal0, File, Goal).
+    templates_kept(Goal0, Context, Goal).
+body_rewritten(hash_consing:Goal0, Context, hash_consing:Goal) :-
+    layer_first(Goal0),
+    !,
+    goal_rewritten(Goal0, [1], Context, Goal).
+body_rewritten(Qualifier:Goal0, Context, Qualifier:Goal) :-
+    !,
+    body_rewritten(Goal0, Context, Goal).
+body_rewritten(Goal0, Context, Goal) :-
+    templates_first(Goal0),
+    prolog_load_context(module, Module),
+    predicate_property(Module:Goal0, imported_from(hash_consing)),
+    !,
+    templates_kept(Goal0, Context, Goal).
+body_rewritten(Goal0, Context, Goal) :-
+    layer_first(Goal0),
+    prolog_load_context(module, Module),
+    predicate_property(Module:Goal0, imported_from(hash_consing)),
+    !,
+    goal_rewritten(Goal0, [1], Context, Goal).
+body_rewritten(Goal0, Context, Goal) :-
+    context_file(Context, File),
+    file_layer_positions(Goal0, File, Positions),
+    goal_rewritten(Goal0, Positions, Context, Goal).
 
-%!  goal_rewritten(+Goal0, +File, -Goal)
+%   templates_first(+Goal): Goal is a predicate of this library whose first
+%   argument is a list of templates. The templates are data the library
+%   reads, not terms to intern, so a call of it in an opted-in file keeps
+%   them as written (templates_kept/3), and only its other arguments are
+%   rewritten.
+
+templates_first(internalized(_, _, _)).
+templates_first(declared(_)).
+
+templates_kept(Goal0, Context, Goal) :-
+    compound_name_arguments(Goal0, Name, [Templates | Arguments]),
+    compound_name_arguments(StandIn, Name, [Placeholder | Arguments]),
+    goal_rewritten(StandIn, [], Context, Goal),
+    Placeholder = Templates.
+
+%   layer_first(+Goal): Goal is a predicate of this library whose first
+%   argument is a layer, kept as a plain layer in an opted-in file.
+
+layer_first(represented(_, _)).
+
+context_file(rewriting(File, _), File).
+
+%!  goal_rewritten(+Goal0, +LayerPositions, +Context, -Goal)
 %
-%   The body goal row of THE REWRITE OF A CLAUSE (above).
+%   The body goal row of THE REWRITE OF A CLAUSE (above), the arguments at
+%   LayerPositions kept as plain layers. An Id occurrence whose layer is its
+%   constructor over variables that occur once in the source clause is
+%   UNREAD: those variables are unbound at the call and nobody reads them
+%   after it, so its Id pattern alone, which selects the constructor and the
+%   shape, is all the goal needs. It is left out of the schedule; after the
+%   call only its handle is checked, and an unbound handle is handed to
+%   intern/2, which raises as it would have.
 
-goal_rewritten(Goal0, File, Goal) :-
-    arguments_of_abstracted(Goal0, File, Called, BottomUp),
-    goal_scheduled(BottomUp, Called, Goal).
+goal_rewritten(Goal0, LayerPositions, rewriting(File, Singletons), Goal) :-
+    arguments_of_abstracted(Goal0, LayerPositions, File, Called, BottomUp),
+    occurrences_partitioned(BottomUp, Singletons, Read, Unread),
+    goal_scheduled(Read, Called, Scheduled),
+    unread_checks(Unread, Checks),
+    conjoined([Scheduled | Checks], Goal).
+
+occurrences_partitioned([], _, [], []).
+occurrences_partitioned([Occurrence | Occurrences], Singletons, Read, Unread) :-
+    (   Occurrence = occurrence(id, Layer, _, _),
+        layer_arguments(Layer, Arguments),
+        Arguments \== [],
+        singleton_arguments(Arguments, Singletons)
+    ->  Unread = [Occurrence | UnreadRest],
+        Read = ReadRest
+    ;   Read = [Occurrence | ReadRest],
+        Unread = UnreadRest
+    ),
+    occurrences_partitioned(Occurrences, Singletons, ReadRest, UnreadRest).
+
+singleton_arguments([], _).
+singleton_arguments([Argument | Arguments], Singletons) :-
+    var(Argument),
+    variable_member(Argument, Singletons),
+    singleton_arguments(Arguments, Singletons).
+
+unread_checks([], []).
+unread_checks([occurrence(id, Layer, Id, Handle) | Occurrences],
+              [(nonvar(Handle) -> true ; hash_consing:intern(Layer, Id)) | Checks]) :-
+    unread_checks(Occurrences, Checks).
 
 goal_scheduled([], Called, Called) :-
     !.
@@ -1502,3 +1984,20 @@ listed_occurs(Term, File) :-
 
 user:term_expansion(Source, Rewritten) :-
     hash_consing:source_rewritten(Source, Rewritten).
+
+%   The message of a constructor with no templates names the two ways to
+%   give it some.
+
+:- multifile prolog:error_message//1.
+
+prolog:error_message(resource_error(hash_consing_store)) -->
+    [ 'The hash_consing store passed the limit set by the flag'-[], nl,
+      'hash_consing_store_limit, or this thread passed the growth budget'-[], nl,
+      'set by hash_consing:store_growth_bounded/1; the store keeps every'-[], nl,
+      'term interned so far.'-[]
+    ].
+prolog:error_message(existence_error(templates, Name/Arity)) -->
+    [ 'No templates for the constructor ~q in this process.'-[Name/Arity], nl,
+      'Declare them with hash_consing:declared/1, or list them in the'-[], nl,
+      'hash_consing:rewritten/1 directive of the files that use them.'-[]
+    ].

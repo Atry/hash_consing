@@ -2,7 +2,7 @@
 %   `app/2` has three templates, tried in order, and an application that none
 %   of them matches stays a plain compound; the occurrences below fall in the
 %   three classes of the rewrite.
-:- module(patterns, [kind/2, size/2, wrapped/2, first/2, built/2, unbound_built/1]).
+:- module(patterns, [kind/2, size/2, wrapped/2, first/2, built/2, unbound_built/1, brought_in/2]).
 :- include(patterns_templates).
 
 %   Must intern, every instance taking the first template: the shape `abs/1`
@@ -43,3 +43,9 @@ built(Function, Built) :-
 %   Undetermined in a body goal and still undecided when it is called.
 unbound_built(Built) :-
     Built = app(_, abs(ref(0))).
+
+%   A call of the library whose first argument is templates keeps them as
+%   written: they are data the library reads, not terms to intern.
+brought_in(External, Internal) :-
+    hash_consing:internalized([app(abs(_), _), app(app(*, _), _), app(_, ref(_)), abs(_), ref(_)],
+                              External, Internal).

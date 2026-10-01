@@ -1,0 +1,29 @@
+predicate(slot_made/2)
+slot_made(A, B) :-
+    hash_consing:represented(slot(A), B).
+predicate(slot_index/2)
+slot_index(A, B) :-
+    hash_consing:represented(slot(B), A).
+predicate(slot_read/2)
+slot_read(A, B) :-
+    stored_layer(A, slot(B)).
+predicate(linked_index/2)
+linked_index(A, B) :-
+    (   ground([B])
+    ->  hash_consing:intern(slot(B), '__hash_consed_slot/1'(C)),
+        stored_layer(A, link('__hash_consed_slot/1'(C), _))
+    ;   (   ground(slot(B))
+        ->  hash_consing:intern(slot(B), '__hash_consed_slot/1'(C))
+        ;   true
+        ),
+        stored_layer(A, link('__hash_consed_slot/1'(C), _)),
+        hash_consing:intern(slot(B), '__hash_consed_slot/1'(C))
+    ).
+predicate(marked_name/2)
+marked_name(marked(A), A).
+predicate(is_slot/1)
+is_slot('__hash_consed_slot/1'(A)) :-
+    (   nonvar(A)
+    ->  true
+    ;   hash_consing:intern(slot(_), '__hash_consed_slot/1'(A))
+    ).
