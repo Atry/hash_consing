@@ -69,15 +69,18 @@
 %   setting's infinite width.
 :- set_setting(listing:line_width, 0).
 
-%!  test_directory(-Directory)  the directory of this file, against which
-%   the fixtures and the snapshots are found.
+%!  test_directory(-Directory)
+%
+%   The directory of this file, against which the fixtures and the snapshots
+%   are found.
 
 :- dynamic test_directory/1.
 :- prolog_load_context(directory, Directory),
    assertz(test_directory(Directory)).
 
-%!  test_file(+Relative, -File)  Relative resolved against the directory of
-%   this file.
+%!  test_file(+Relative, -File)
+%
+%   Relative resolved against the directory of this file.
 
 test_file(Relative, File) :-
     test_directory(Directory),
@@ -96,12 +99,13 @@ user:message_hook(goal_failed(directive, _), warning, _) :-
     loading(Fixture),
     assertz(load_error(Fixture, directive_failed)).
 
-%!  fixture_loaded(+Fixture)  the setup of a fixture's unit: the fixture
-%   file loaded, each error of the load recorded as
-%   `load_error(Fixture, Formal)`. Nothing is imported: the fixtures export
-%   predicates of the same name (`kind/2` in `inner_dispatch` and `patterns`),
-%   which one module could not import from both, and the tests call them
-%   qualified.
+%!  fixture_loaded(+Fixture)
+%
+%   The setup of a fixture's unit: the fixture file loaded, each error of the
+%   load recorded as `load_error(Fixture, Formal)`. Nothing is imported: the
+%   fixtures export predicates of the same name (`kind/2` in `inner_dispatch`
+%   and `patterns`), which one module could not import from both, and the
+%   tests call them qualified.
 
 fixture_loaded(Fixture) :-
     fixture(Fixture, Relative, _, _),
@@ -113,9 +117,11 @@ fixture_loaded(Fixture) :-
 
 %   ---- rendering a fixture ----
 
-%!  fixture_rendered(+Fixture, -Rendered)  the errors recorded while the
-%   fixture loaded, one `load_error(Formal)` line each, then each predicate
-%   of the fixture's list with the clauses the load produced, as one string.
+%!  fixture_rendered(+Fixture, -Rendered)
+%
+%   The errors recorded while the fixture loaded, one `load_error(Formal)`
+%   line each, then each predicate of the fixture's list with the clauses the
+%   load produced, as one string.
 
 fixture_rendered(Fixture, Rendered) :-
     fixture(Fixture, _, Module, Predicates),
@@ -132,9 +138,10 @@ load_errors_printed(Fixture) :-
                    format('load_error(~W)~n', [Formal, [quoted(true), numbervars(true)]])
                  )).
 
-%!  paths_shortened(+Term, -Shortened)  every absolute file name in Term as
-%   its base name, so that the rendering does not depend on where the
-%   repository is checked out.
+%!  paths_shortened(+Term, -Shortened)
+%
+%   Every absolute file name in Term as its base name, so that the rendering
+%   does not depend on where the repository is checked out.
 
 paths_shortened(Term, Term) :-
     var(Term),
@@ -157,7 +164,9 @@ arguments_paths_shortened([Argument | Arguments], [Shortened | Shorteneds]) :-
     paths_shortened(Argument, Shortened),
     arguments_paths_shortened(Arguments, Shorteneds).
 
-%!  predicate_printed(+Module, +Name/Arity)  the clauses as loaded.
+%!  predicate_printed(+Module, +Name/Arity)
+%
+%   The clauses as loaded.
 
 predicate_printed(Module, Name/Arity) :-
     functor(Head, Name, Arity),
@@ -193,8 +202,9 @@ arguments_baked_externalized([Argument | Arguments], [Printed | Printeds]) :-
     baked_externalized(Argument, Printed),
     arguments_baked_externalized(Arguments, Printeds).
 
-%!  snapshot_read(+Fixture, -Snapshot)  the text of the fixture's file in
-%   `hash_consing_snapshots/`.
+%!  snapshot_read(+Fixture, -Snapshot)
+%
+%   The text of the fixture's file in `hash_consing_snapshots/`.
 
 snapshot_read(Fixture, Snapshot) :-
     format(atom(Relative), 'hash_consing_snapshots/~w.txt', [Fixture]),
@@ -203,18 +213,24 @@ snapshot_read(Fixture, Snapshot) :-
 
 %   ---- the queries' helpers ----
 
-%!  store_count(-Count)  how many terms the store holds.
+%!  store_count(-Count)
+%
+%   How many terms the store holds.
 store_count(Count) :-
     nb_getval(hash_consing_store, Trie),
     trie_property(Trie, value_count(Count)).
 
-%!  spelling_count(-Count)  how many shape atoms the library has spelled.
+%!  spelling_count(-Count)
+%
+%   How many shape atoms the library has spelled.
 spelling_count(Count) :-
     nb_getval(hash_consing_spellings, Trie),
     trie_property(Trie, value_count(Count)).
 
-%!  shape_indexed(+Head)  the just in time indexer built an index on the
-%   first argument of the first argument, which is the shape.
+%!  shape_indexed(+Head)
+%
+%   The just in time indexer built an index on the first argument of the first
+%   argument, which is the shape.
 shape_indexed(Head) :-
     predicate_property(Head, indexed(Indexes)),
     member(Index, Indexes),
@@ -226,48 +242,57 @@ shape_indexed(Head) :-
 called_repeatedly(Goal) :-
     forall(between(1, 20, _), ( call(Goal) -> true ; true )).
 
-%!  answers_its_term(+Term)  Term interns to an Id that externalizes back to
-%   Term.
+%!  answers_its_term(+Term)
+%
+%   Term interns to an Id that externalizes back to Term.
 answers_its_term(Term) :-
     intern(Term, Id),
     externalized(Id, Back),
     Back == Term.
 
-%!  interned_forever(+Round, +Index)  interns `time_probe(Round, Index,
-%   leaf)` and the probes after it until a limit stops it, recording in
-%   the global variable `interrupted_intern_count` the last Index interned.
+%!  interned_forever(+Round, +Index)
+%
+%   Interns `time_probe(Round, Index, leaf)` and the probes after it until a
+%   limit stops it, recording in the global variable
+%   `interrupted_intern_count` the last Index interned.
 interned_forever(Round, Index) :-
     intern(time_probe(Round, Index, leaf), _),
     nb_setval(interrupted_intern_count, Index),
     Next is Index + 1,
     interned_forever(Round, Next).
 
-%!  numbered_template(+Prefix, +Number, -Template)  the template
-%   `Prefix_Number(_)`.
+%!  numbered_template(+Prefix, +Number, -Template)
+%
+%   The template `Prefix_Number(_)`.
 numbered_template(Prefix, Number, Template) :-
     format(atom(Name), '~w_~d', [Prefix, Number]),
     functor(Template, Name, 1).
 
-%!  templates_declared_one_by_one(+Templates, +Worker)  each template
-%   declared alone, in the order of the list.
+%!  templates_declared_one_by_one(+Templates, +Worker)
+%
+%   Each template declared alone, in the order of the list.
 templates_declared_one_by_one(Templates, _) :-
     forall(member(Template, Templates), declared([Template])).
 
-%!  thread_stores(-Stores)  the store and the spellings of this thread, the
-%   two global variables of prolog/hash_consing.pl.
+%!  thread_stores(-Stores)
+%
+%   The store and the spellings of this thread, the two global variables of
+%   prolog/hash_consing.pl.
 thread_stores(stores(Store, Spellings)) :-
     nb_getval(hash_consing_store, Store),
     nb_getval(hash_consing_spellings, Spellings).
 
-%!  thread_stores_installed(+Stores)  Stores installed in this thread, which
-%   then interns into the same tries.
+%!  thread_stores_installed(+Stores)
+%
+%   Stores installed in this thread, which then interns into the same tries.
 thread_stores_installed(stores(Store, Spellings)) :-
     nb_setval(hash_consing_store, Store),
     nb_setval(hash_consing_spellings, Spellings).
 
-%!  terms_interned_with_stores(+Stores, +Numbers, +Worker, -Ids)  the Id of
-%   `concurrently_interned(Number)` for each of Numbers, interned by this
-%   thread into Stores.
+%!  terms_interned_with_stores(+Stores, +Numbers, +Worker, -Ids)
+%
+%   The Id of `concurrently_interned(Number)` for each of Numbers, interned by
+%   this thread into Stores.
 terms_interned_with_stores(Stores, Numbers, _, Ids) :-
     thread_stores_installed(Stores),
     maplist(number_interned, Numbers, Ids).
@@ -275,9 +300,10 @@ terms_interned_with_stores(Stores, Numbers, _, Ids) :-
 number_interned(Number, Id) :-
     intern(concurrently_interned(Number), Id).
 
-%!  shapes_interned_with_stores(+Stores, +Numbers, +Worker, -Ids)  the Id of
-%   `concurrently_shaped(shape_Number, Worker)` for each of Numbers: a term
-%   of this thread's own, whose shape every thread spells alike.
+%!  shapes_interned_with_stores(+Stores, +Numbers, +Worker, -Ids)
+%
+%   The Id of `concurrently_shaped(shape_Number, Worker)` for each of Numbers:
+%   a term of this thread's own, whose shape every thread spells alike.
 shapes_interned_with_stores(Stores, Numbers, Worker, Ids) :-
     thread_stores_installed(Stores),
     maplist(shape_interned(Worker), Numbers, Ids).
@@ -288,9 +314,10 @@ shape_interned(Worker, Number, Id) :-
 
 %   ---- the fixtures ----
 
-%!  fixture(?Fixture, ?File, ?Module, ?Predicates)  a fixture file, relative
-%   to this file's directory, the module it defines, and the predicates its
-%   rendering shows.
+%!  fixture(?Fixture, ?File, ?Module, ?Predicates)
+%
+%   A fixture file, relative to this file's directory, the module it defines,
+%   and the predicates its rendering shows.
 
 fixture(steps, 'hash_consing_fixtures/steps.pl', steps,
         [step/2, callee/2, built/2, constant/1]).
