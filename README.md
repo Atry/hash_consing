@@ -18,10 +18,19 @@ same Id.
 
 ## Use
 
+Keep the directive that names the terms to intern in a file of its own:
+
 ```prolog
-:- module(steps, [step/2, built/2]).
+% calculus_templates.pl
 :- use_module(library(hash_consing), []).
 :- hash_consing:rewritten([apply(lambda(_), _), lambda(_), variable(_)]).
+```
+
+and include it in every file that uses these terms:
+
+```prolog
+:- module(steps, [step/2, built/2]).
+:- include(calculus_templates).
 
 step(apply(lambda(Body), Argument), beta(Body, Argument)).
 
@@ -29,9 +38,27 @@ built(Function, Applied) :-
     Applied = apply(Function, variable(0)).
 ```
 
+```prolog
+:- module(redexes, [is_redex/1]).
+:- include(calculus_templates).
+
+is_redex(apply(lambda(_), _)).
+```
+
 Here an application is interned when its first argument is a lambda; any
 other application stays a plain compound whose arguments are represented in
-turn. A term that did not come through the rewrite crosses the boundary with
+turn. The included directive opts in the file that includes it, so both
+modules rewrite the same terms: when `built/2` in `steps` applies a lambda,
+the application it makes is the Id that the head of `is_redex/1` in
+`redexes` expects.
+
+**Warning:** the rewrite is per file. A file rewrites only the terms its own
+directive names, and the library checks nothing between files. A file that
+receives interned terms without including the directive keeps plain terms
+in its clauses, so its heads never unify with the Ids: the call fails,
+silently, with no error. Write the directive once and include it everywhere.
+
+A term that did not come through the rewrite crosses the boundary with
 `hash_consing:internalized/3`, `hash_consing:externalized/2` turns Ids back
 into terms, and `hash_consing:declared/1` declares templates at run time, for
 constructors a program makes as it runs. The module comment of
@@ -49,10 +76,18 @@ template's constructor, whose arguments match the nested template's). A
 constructor may have several templates. They are tried in the order of the
 list, the first that matches a term is its template, and a term that none
 matches is not interned. From
-[`test/hash_consing_fixtures/patterns.pl`](test/hash_consing_fixtures/patterns.pl):
+[`test/hash_consing_fixtures/patterns_templates.pl`](test/hash_consing_fixtures/patterns_templates.pl):
 
 ```prolog
+:- use_module(library(hash_consing), []).
 :- hash_consing:rewritten([app(abs(_), _), app(app(*, _), _), app(_, ref(_)), abs(_), ref(_)]).
+```
+
+and [`test/hash_consing_fixtures/patterns.pl`](test/hash_consing_fixtures/patterns.pl),
+which includes it:
+
+```prolog
+:- include(patterns_templates).
 
 %   Must intern, every instance taking the first template: the shape `abs/1`
 %   is written into the head.
@@ -81,43 +116,6 @@ that position, related to the term by `hash_consing:represented/2`; the clause
 keeps its meaning and loses the first argument index there. A body goal hands
 such an occurrence over decided: what is bound of it must settle whether a
 template matches, or the call raises an instantiation error.
-
-## Share one directive among files
-
-**Warning:** the rewrite is per file. A file rewrites only the constructors
-its own `hash_consing:rewritten/1` lists, and the library checks nothing
-between files. When an interned term crosses into a file that does not list
-its constructor, that file keeps plain terms, so its heads and the Ids never
-unify: the call fails, silently, with no error.
-
-Keep the directive in one file and `include/1` it in every file that hands
-these terms to another, so that all of them list the same templates:
-
-```prolog
-% calculus_templates.pl
-:- hash_consing:rewritten([apply(lambda(_), _), lambda(_), variable(_)]).
-```
-
-```prolog
-:- module(producer, [redex/1]).
-:- use_module(library(hash_consing), []).
-:- include(calculus_templates).
-
-redex(apply(lambda(variable(0)), variable(1))).
-```
-
-```prolog
-:- module(consumer, [is_redex/1]).
-:- use_module(library(hash_consing), []).
-:- include(calculus_templates).
-
-is_redex(apply(lambda(_), _)).
-```
-
-The included directive opts in the file that includes it. Here
-`redex(R), is_redex(R)` succeeds. A third module that defines the same
-`is_redex/1` without the include fails on the same `R`, because its head
-is a plain `apply(lambda(_), _)` and `R` is an Id.
 
 ## Incompatible changes in 0.2.0
 
