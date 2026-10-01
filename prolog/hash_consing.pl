@@ -293,18 +293,10 @@ _)`); a forged `'__hash_consed_apply/2'(42)` reaches it. Only a bug makes
 such a value. Candidate fix: none in the trie API; the assertz backends of
 the benchmark raise instead, at the costs recorded there.
 
-FIXME: on 2026-09-14, within tabled
-compiles near a full stack, `trie_lookup/3` failed silently on a key of the
-store and left the resource error pending. Here such a failure turns an
-upsert into an insertion of an existing key, which raises, or a lookup into a
-failure, which reads as no answer rather than `resource_error`. A direct probe
-at 1m, 4m and 32m stacks on 2026-09-17 raised `resource_error(stack)` every
-time and did not reproduce it.
-
 FIXME: an Id written into a clause while the file loads
 is a handle of this process. A file must be loaded from source, never
-`qcompile`d nor saved in a state, and the store lives in one thread's global
-variable.
+`qcompile`d nor saved in a state, and a thread reads such an Id only after it
+installs the loading thread's store (THREADS SHARE THE STORE, above).
 
 FIXME: a file that uses a constructor another file
 interns, without listing it, passes its instances uninterned; the rewritten
