@@ -191,8 +191,10 @@ decided at run time, so the file is written as the program that does not
 intern and needs no mode declaration. Several directives in one file add up,
 each declaring whole lists. An empty list rewrites nothing. The library
 checks no consistency between files: files that pass one constructor to each
-other must both list it, which the user arranges, for instance with one
-included file (user ruling, 2026-09-17).
+other must both list it, which the user arranges (user ruling, 2026-09-17).
+SHARE ONE DIRECTIVE BY `include/1`: keep the directive in one file that every
+file handing these terms to another includes; an included directive opts in
+the file that includes it. A file left out fails silently (the FIXME below).
 
 AN OCCURRENCE IS CLASSIFIED while the file loads, by comparing its source
 pattern with each template of its constructor: every instance of the pattern
@@ -261,10 +263,12 @@ second: a term that matches no template stays as it is (user, 2026-09-26),
 and a callee could not otherwise tell whether to receive an Id or a plain
 term. (2) Reflection sees Ids: `=..`, `functor/3`, `arg/3`, `write/1`,
 `variant_sha1/2`, `term_hash/2` and ordering whose result depends on the
-order see `'__hash_consed_Name/Arity'(Handle)`. Code that reads structure calls
-`externalized/2` first, and code that builds an instance with them calls
-`internalized/3` after; an instance that must be interned and is left
-uninterned fails to unify at every rewritten position. Using an Id as an
+order see `'__hash_consed_Name/Arity'(Handle)`; the standard order of two Ids
+depends on the history of insertions into the store, not on their terms.
+Code that reads structure calls `externalized/2` first, and code that builds
+an instance with them calls `internalized/3` after; an instance that must
+be interned and is left uninterned fails to unify at every rewritten
+position. Using an Id as an
 opaque key, whose result does not depend on the order (an assoc key, a sort
 to remove duplicates), is fine.
 
@@ -289,27 +293,15 @@ _)`); a forged `'__hash_consed_apply/2'(42)` reaches it. Only a bug makes
 such a value. Candidate fix: none in the trie API; the assertz backends of
 the benchmark raise instead, at the costs recorded there.
 
-FIXME: on 2026-09-14, within tabled
-compiles near a full stack, `trie_lookup/3` failed silently on a key of the
-store and left the resource error pending. Here such a failure turns an
-upsert into an insertion of an existing key, which raises, or a lookup into a
-failure, which reads as no answer rather than `resource_error`. A direct probe
-at 1m, 4m and 32m stacks on 2026-09-17 raised `resource_error(stack)` every
-time and did not reproduce it.
-
-FIXME: the order of two Ids depends on the insertion
-history. Nothing checks that no code in an opted-in file reads that order;
-it is a rule of the file, stated above.
-
 FIXME: an Id written into a clause while the file loads
 is a handle of this process. A file must be loaded from source, never
-`qcompile`d nor saved in a state, and the store lives in one thread's global
-variable.
+`qcompile`d nor saved in a state, and a thread reads such an Id only after it
+installs the loading thread's store (THREADS SHARE THE STORE, above).
 
 FIXME: a file that uses a constructor another file
 interns, without listing it, passes its instances uninterned; the rewritten
-positions of the other file then fail to unify, silently. The library cannot
-see it.
+positions of the other file then fail to unify, silently. The library does
+not check it; one directive shared by `include/1` (above) avoids it.
 */
 
 :- use_module(library(error), [must_be/2]).
@@ -317,8 +309,10 @@ see it.
 
 :- initialization(stores_created).
 
-%!  stores_created  the store and the spellings of the shapes, two tries in
-%   global variables of the loading thread.
+%!  stores_created
+%
+%   The store and the spellings of the shapes, two tries in global variables
+%   of the loading thread.
 
 stores_created :-
     trie_new(Store),
@@ -328,7 +322,9 @@ stores_created :-
 
 %   ---- the relation ----
 
-%!  intern(?Term, ?Id)  Id is the Id of the ground term Term.
+%!  intern(?Term, ?Id)
+%
+%   Id is the Id of the ground term Term.
 
 intern(Term, Id) :-
     nonvar(Id),
@@ -342,9 +338,10 @@ intern(Term, Id) :-
 intern(Term, Id) :-
     upserted(Term, Id).
 
-%!  upserted(+Term, ?Id)  when a template of Term's constructor matches it,
-%   insert Term unless it is stored, and answer its Id; fail, inserting
-%   nothing, when none does.
+%!  upserted(+Term, ?Id)
+%
+%   When a template of Term's constructor matches it, insert Term unless it is
+%   stored, and answer its Id; fail, inserting nothing, when none does.
 
 upserted(Term, Id) :-
     (   ground(Term)
@@ -404,9 +401,11 @@ settled_handle(Trie, Term, pending, Handle) :-
     trie_update(Trie, Term, Handle).
 settled_handle(_, _, Handle, Handle).
 
-%!  represented(?Layer, ?Representation)  Representation represents Layer, a
-%   constructor applied to represented arguments: its Id when a template of
-%   the constructor matches it, Layer itself otherwise.
+%!  represented(?Layer, ?Representation)
+%
+%   Representation represents Layer, a constructor applied to represented
+%   arguments: its Id when a template of the constructor matches it, Layer
+%   itself otherwise.
 %
 %   Given an Id of the constructor, Layer is its stored term, or, when the
 %   handle is unbound, Layer is interned into it and must be ground. Given
@@ -455,10 +454,11 @@ representation_made(Templates, Kind, Name, Arity, Layer, Representation) :-
     ;   throw(error(instantiation_error, context(hash_consing:represented/2, Layer)))
     ).
 
-%!  represented_settled(+Layer, ?Representation)  represented/2 at the end of
-%   a rewritten head, where rule (1) of the module comment leaves no Id
-%   pattern with an unbound handle: such a pattern raises an instantiation
-%   error.
+%!  represented_settled(+Layer, ?Representation)
+%
+%   Represented/2 at the end of a rewritten head, where rule (1) of the module
+%   comment leaves no Id pattern with an unbound handle: such a pattern raises
+%   an instantiation error.
 
 represented_settled(Layer, Representation) :-
     represented(Layer, Representation),
@@ -468,19 +468,22 @@ represented_settled(Layer, Representation) :-
     ;   true
     ).
 
-%!  is_id(+Value)  Value is an Id: an Id functor this process made, applied
-%   to a bound handle.
+%!  is_id(+Value)
+%
+%   Value is an Id: an Id functor this process made, applied to a bound
+%   handle.
 
 is_id(Value) :-
     id_parts(Value, _, _, Handle),
     nonvar(Handle).
 
-%!  id_parts(+Value, -IdName, -Shape, -Handle)  Value is an Id or an Id
-%   pattern: its functor is one id_name/3 made, which the first argument
-%   index of id_constructor/3 finds without scanning the name (the prefix
-%   test it replaces took 30 percent of a lambda_jit read, 2026-09-26).
-%   Shape is `none` for a constructor without a shape. Fails on any other
-%   value.
+%!  id_parts(+Value, -IdName, -Shape, -Handle)
+%
+%   Value is an Id or an Id pattern: its functor is one id_name/3 made, which
+%   the first argument index of id_constructor/3 finds without scanning the
+%   name (the prefix test it replaces took 30 percent of a lambda_jit read,
+%   2026-09-26). Shape is `none` for a constructor without a shape. Fails on
+%   any other value.
 
 id_parts(Value, IdName, Shape, Handle) :-
     compound(Value),
@@ -494,10 +497,11 @@ id_arguments(2, Value, Shape, Handle) :-
     arg(1, Value, Shape),
     arg(2, Value, Handle).
 
-%!  id_built(+Name, +Arity, +Kind, +Structure, ?Handle, -Id)  the Id, or
-%   the Id pattern, of the constructor with the handle Handle: no shape when
-%   Kind is `root_only`, an unbound shape when Structure is `unknown`, and
-%   otherwise the spelling of Structure.
+%!  id_built(+Name, +Arity, +Kind, +Structure, ?Handle, -Id)
+%
+%   The Id, or the Id pattern, of the constructor with the handle Handle: no
+%   shape when Kind is `root_only`, an unbound shape when Structure is
+%   `unknown`, and otherwise the spelling of Structure.
 
 id_built(Name, Arity, Kind, Structure, Handle, Id) :-
     id_name(Name, Arity, IdName),
@@ -509,8 +513,10 @@ id_built(Name, Arity, Kind, Structure, Handle, Id) :-
         compound_name_arguments(Id, IdName, [Shape, Handle])
     ).
 
-%!  id_name(+Name, +Arity, -IdName)  the functor name of the Ids of the
-%   constructor Name/Arity, remembered once made, in both directions.
+%!  id_name(+Name, +Arity, -IdName)
+%
+%   The functor name of the Ids of the constructor Name/Arity, remembered once
+%   made, in both directions.
 
 :- dynamic known_id_name/3.             % known_id_name(Name, Arity, IdName)
 :- dynamic id_constructor/3.            % id_constructor(IdName, Name, Arity)
@@ -543,15 +549,18 @@ id_name_made(Name, Arity, IdName) :-
 
 :- dynamic constructor_templates/4.     % constructor_templates(Name, Arity, Templates, Kind)
 
-%!  declared(+Templates)  the constructors of the list declared for this
-%   process, each with its templates in the order of the list.
+%!  declared(+Templates)
+%
+%   The constructors of the list declared for this process, each with its
+%   templates in the order of the list.
 
 declared(Templates) :-
     templates_declared(Templates, hash_consing:declared/1, _).
 
-%!  templates_known(+Name, +Arity, +Context, -Templates, -Kind)  the declared
-%   templates of the constructor, and `root_only` or `shaped`; raises when
-%   the constructor has none.
+%!  templates_known(+Name, +Arity, +Context, -Templates, -Kind)
+%
+%   The declared templates of the constructor, and `root_only` or `shaped`;
+%   raises when the constructor has none.
 
 templates_known(Name, Arity, Context, Templates, Kind) :-
     (   constructor_templates(Name, Arity, Templates, Kind)
@@ -559,11 +568,13 @@ templates_known(Name, Arity, Context, Templates, Kind) :-
     ;   throw(error(existence_error(templates, Name/Arity), context(Context, _)))
     ).
 
-%!  templates_declared(+Templates, +Context, -Constructors)  the list parsed
-%   and grouped by constructor, in the order of first appearance; every group
-%   checked before any is registered; Constructors the `Name/Arity` of the
-%   groups. Raises, registering nothing, on a malformed or unreachable
-%   template and on a constructor already declared with another list.
+%!  templates_declared(+Templates, +Context, -Constructors)
+%
+%   The list parsed and grouped by constructor, in the order of first
+%   appearance; every group checked before any is registered; Constructors the
+%   `Name/Arity` of the groups. Raises, registering nothing, on a malformed or
+%   unreachable template and on a constructor already declared with another
+%   list.
 
 templates_declared(Templates, Context, Constructors) :-
     must_be(list, Templates),
@@ -622,8 +633,9 @@ groups_checked([group(Name/Arity, Written, Templates) | Groups], Context) :-
     ),
     groups_checked(Groups, Context).
 
-%!  templates_reachable(+Written, +Templates, +Earlier, +Context)  no
-%   template is always taken first by one template before it.
+%!  templates_reachable(+Written, +Templates, +Earlier, +Context)
+%
+%   No template is always taken first by one template before it.
 
 templates_reachable([], [], _, _).
 templates_reachable([Template | Written], [Parsed | Templates], Earlier, Context) :-
@@ -633,8 +645,9 @@ templates_reachable([Template | Written], [Parsed | Templates], Earlier, Context
     ;   templates_reachable(Written, Templates, [Parsed | Earlier], Context)
     ).
 
-%!  template_covers(+Covering, +Covered)  every term Covered matches,
-%   Covering matches too.
+%!  template_covers(+Covering, +Covered)
+%
+%   Every term Covered matches, Covering matches too.
 
 template_covers(template(Constructor, Coverings), template(Constructor, Covereds)) :-
     arguments_cover(Coverings, Covereds).
@@ -678,8 +691,9 @@ compound_name_arguments_or_atom(Term, Name, Arguments) :-
     ;   compound_name_arguments(Term, Name, Arguments)
     ).
 
-%!  templates_parsed(+Templates, +Context, -Pairs)  each template paired with
-%   its parsed form, `Template-Parsed`.
+%!  templates_parsed(+Templates, +Context, -Pairs)
+%
+%   Each template paired with its parsed form, `Template-Parsed`.
 
 templates_parsed([], _, []).
 templates_parsed([Template | Templates], Context, [Template-Parsed | Pairs]) :-
@@ -713,8 +727,9 @@ argument_parsed(*, _, root) :-
 argument_parsed(Argument, Context, Parsed) :-
     template_parsed(Argument, Context, Parsed).
 
-%!  templates_written(+Templates, -Written)  parsed templates written back as
-%   a user writes them, for an error to show.
+%!  templates_written(+Templates, -Written)
+%
+%   Parsed templates written back as a user writes them, for an error to show.
 
 templates_written([], []).
 templates_written([Template | Templates], [Written | Writtens]) :-
@@ -753,9 +768,10 @@ argument_written(template(Constructor, Arguments), Written) :-
 %   are and off an Id through the store, and a variable, or the arguments of
 %   an Id pattern whose handle is unbound, are open.
 
-%!  value_classified(+Templates, +Value, -Class, -Structure)  Class is
-%   `must_intern` when a template matches every term Value stands for,
-%   `must_not_intern` when no template matches any, `undetermined`
+%!  value_classified(+Templates, +Value, -Class, -Structure)
+%
+%   Class is `must_intern` when a template matches every term Value stands
+%   for, `must_not_intern` when no template matches any, `undetermined`
 %   otherwise. Structure is what the first template that matches some such
 %   term records, when that template matches them all and every root it
 %   records is known; `unknown` otherwise.
@@ -801,8 +817,10 @@ description_known(constructor(_, Inner)) :-
         descriptions_known(Inner)
     ).
 
-%!  first_template_recorded(+Templates, +Term, -Structure)  what the first
-%   template that matches the ground Term records; fails when none does.
+%!  first_template_recorded(+Templates, +Term, -Structure)
+%
+%   What the first template that matches the ground Term records; fails when
+%   none does.
 
 first_template_recorded([Template | Templates], Term, Structure) :-
     template_relation(Template, Term, Relation, Descriptions),
@@ -811,10 +829,11 @@ first_template_recorded([Template | Templates], Term, Structure) :-
     ;   first_template_recorded(Templates, Term, Structure)
     ).
 
-%!  template_relation(+Template, +Value, -Relation, -Descriptions)  whether
-%   every term Value stands for matches the template (`instance`), none does
-%   (`disjoint`) or some do (`overlap`), and what the template records on
-%   them. Value's own root is the template's constructor.
+%!  template_relation(+Template, +Value, -Relation, -Descriptions)
+%
+%   Whether every term Value stands for matches the template (`instance`),
+%   none does (`disjoint`) or some do (`overlap`), and what the template
+%   records on them. Value's own root is the template's constructor.
 
 template_relation(template(_, TemplateArguments), Value, Relation, Descriptions) :-
     compound_name_arguments_or_atom(Value, _, Arguments),
@@ -864,9 +883,11 @@ root_description(open, unknown).
 root_description(other, other).
 root_description(Name/Arity, constructor(Name/Arity, none)).
 
-%!  value_root(+Value, -Root)  the root constructor of the term Value stands
-%   for, `Name/Arity`, read off an Id's functor name without a lookup;
-%   `open` for a variable, `other` for a number or a string.
+%!  value_root(+Value, -Root)
+%
+%   The root constructor of the term Value stands for, `Name/Arity`, read off
+%   an Id's functor name without a lookup; `open` for a variable, `other` for
+%   a number or a string.
 
 value_root(Value, open) :-
     var(Value),
@@ -884,10 +905,11 @@ value_root(Value, Value/0) :-
     !.
 value_root(_, other).
 
-%!  value_view(+Value, -View)  `layer(Name/Arity, Arguments)`, the root and
-%   the arguments of the term Value stands for, an Id's read from the store
-%   and open while its handle is unbound; `open` for a variable; `other` for
-%   a number or a string.
+%!  value_view(+Value, -View)
+%
+%   `layer(Name/Arity, Arguments)`, the root and the arguments of the term
+%   Value stands for, an Id's read from the store and open while its handle is
+%   unbound; `open` for a variable; `other` for a number or a string.
 
 value_view(Value, open) :-
     var(Value),
@@ -911,8 +933,10 @@ value_view(Value, layer(Value/0, [])) :-
     !.
 value_view(_, other).
 
-%!  structure_spelled(+Structure, -Atom)  the shape atom of a structure,
-%   remembered in the trie of spellings so that it is built once.
+%!  structure_spelled(+Structure, -Atom)
+%
+%   The shape atom of a structure, remembered in the trie of spellings so that
+%   it is built once.
 
 structure_spelled(Structure, Atom) :-
     nb_getval(hash_consing_spellings, Spellings),
@@ -935,8 +959,10 @@ spelling_inserted(Spellings, Structure, Atom) :-
         trie_insert(Spellings, Structure, Atom)
     ).
 
-%!  structure_atom(+Structure, -Atom)  the spelling: descriptions joined by
-%   commas, `-` for `other`, `Name/Arity` and, in parentheses, what is below.
+%!  structure_atom(+Structure, -Atom)
+%
+%   The spelling: descriptions joined by commas, `-` for `other`, `Name/Arity`
+%   and, in parentheses, what is below.
 
 structure_atom(Structure, Atom) :-
     descriptions_texts(Structure, Texts),
@@ -957,8 +983,9 @@ description_text(constructor(Name/Arity, Inner), Text) :-
 
 %   ---- the boundary ----
 
-%!  externalized(+TermWithIds, -External)  every Id replaced by its term,
-%   recursively.
+%!  externalized(+TermWithIds, -External)
+%
+%   Every Id replaced by its term, recursively.
 
 externalized(Term, External) :-
     var(Term),
@@ -985,10 +1012,11 @@ arguments_externalized([Argument | Arguments], [External | Externals]) :-
     externalized(Argument, External),
     arguments_externalized(Arguments, Externals).
 
-%!  internalized(+Templates, +External, -TermWithIds)  the templates declared
-%   as declared/1 declares them, then every instance of their constructors
-%   represented, bottom up: its Id when a template matches it, the plain
-%   term otherwise; an Id is kept as it is.
+%!  internalized(+Templates, +External, -TermWithIds)
+%
+%   The templates declared as declared/1 declares them, then every instance of
+%   their constructors represented, bottom up: its Id when a template matches
+%   it, the plain term otherwise; an Id is kept as it is.
 
 internalized(Templates, External, TermWithIds) :-
     templates_declared(Templates, hash_consing:internalized/3, Constructors),
@@ -1041,8 +1069,10 @@ instance_internalized(Name/Arity, Constructors, Layer, Internal) :-
 
 %   ---- the directive ----
 
-%!  rewritten(+Templates)  the file being loaded opts in for the
-%   constructors whose templates are in the list; several calls add up.
+%!  rewritten(+Templates)
+%
+%   The file being loaded opts in for the constructors whose templates are in
+%   the list; several calls add up.
 
 :- dynamic registered_constructor/3.     % registered_constructor(SourceFile, Name, Arity)
 
@@ -1065,8 +1095,10 @@ constructors_registered([Name/Arity | Constructors], File) :-
 
 %   ---- the rewrite ----
 
-%!  source_rewritten(+Source, -Rewritten)  the rewrite of one term read from a
-%   file that opted in; fails, leaving the term to SWI-Prolog, otherwise.
+%!  source_rewritten(+Source, -Rewritten)
+%
+%   The rewrite of one term read from a file that opted in; fails, leaving the
+%   term to SWI-Prolog, otherwise.
 
 source_rewritten(Source, _) :-
     var(Source),
@@ -1101,8 +1133,9 @@ clause_rewritten((Head :- Body), File, Rewritten) :-
 clause_rewritten(Head, File, Rewritten) :-
     rule_rewritten(Head, true, File, Rewritten).
 
-%!  rule_rewritten(+Head, +Body, +File, -Rewritten)  the head's
-%   occurrences scheduled around the rewritten body.
+%!  rule_rewritten(+Head, +Body, +File, -Rewritten)
+%
+%   The head's occurrences scheduled around the rewritten body.
 
 rule_rewritten(Qualifier:Head0, Body0, File, (Qualifier:Head :- Body)) :-
     !,
@@ -1115,15 +1148,17 @@ plain_rule_rewritten(Head0, Body0, File, Head, Body) :-
     body_rewritten(Body0, File, RewrittenBody),
     head_scheduled(Occurrences, RewrittenBody, Body).
 
-%!  arguments_of_abstracted(+Callable0, +File, -Callable, -Occurrences)  the
-%   arguments of a head or a goal abstracted (its own functor is a predicate
-%   and is left alone), the ground occurrences represented now, and the
-%   others listed bottom up as `occurrence(Class, Layer, Representation,
-%   Handle)`: Class `id` for an occurrence that must be interned, its
-%   Representation an Id pattern and Handle that pattern's handle, and
-%   `undetermined(IdName)` for an undetermined one, its Representation and
-%   its Handle the fresh variable written where it stood. An occurrence that
-%   must not be interned is its layer, written in place, and is not listed.
+%!  arguments_of_abstracted(+Callable0, +File, -Callable, -Occurrences)
+%
+%   The arguments of a head or a goal abstracted (its own functor is a
+%   predicate and is left alone), the ground occurrences represented now, and
+%   the others listed bottom up as
+%   `occurrence(Class, Layer, Representation, Handle)`: Class `id` for an
+%   occurrence that must be interned, its Representation an Id pattern and
+%   Handle that pattern's handle, and `undetermined(IdName)` for an
+%   undetermined one, its Representation and its Handle the fresh variable
+%   written where it stood. An occurrence that must not be interned is its
+%   layer, written in place, and is not listed.
 
 arguments_of_abstracted(Callable0, File, Callable, Occurrences) :-
     compound(Callable0),
@@ -1140,9 +1175,11 @@ arguments_abstracted([Argument0 | Arguments0], File, [Argument | Arguments], Rev
     abstracted(Argument0, File, Argument, Reversed0, Reversed1),
     arguments_abstracted(Arguments0, File, Arguments, Reversed1, Reversed).
 
-%!  abstracted(+Term0, +File, -Term, +Reversed0, -Reversed)  each occurrence
-%   of a listed constructor replaced by its representation in the clause,
-%   its subterms first, the listed occurrences prepended as they are met.
+%!  abstracted(+Term0, +File, -Term, +Reversed0, -Reversed)
+%
+%   Each occurrence of a listed constructor replaced by its representation in
+%   the clause, its subterms first, the listed occurrences prepended as they
+%   are met.
 
 abstracted(Term, _, Term, Reversed, Reversed) :-
     var(Term),
@@ -1161,10 +1198,10 @@ abstracted(Term0, File, Term, Reversed0, Reversed) :-
     occurrence_abstracted(Term0, 0, Term0, Term0, File, Term, Reversed0, Reversed).
 abstracted(Term, _, Term, Reversed, Reversed).
 
-%!  occurrence_abstracted(+Name, +Arity, +Source, +Layer, +File,
-%   -Representation, +Reversed0, -Reversed)  AN OCCURRENCE IS CLASSIFIED
-%   (above) by its source pattern Source, and written as an Id pattern, as
-%   its layer, or as a fresh variable.
+%!  occurrence_abstracted(+Name, +Arity, +Source, +Layer, +File, -Representation, +Reversed0, -Reversed)
+%
+%   AN OCCURRENCE IS CLASSIFIED (above) by its source pattern Source, and
+%   written as an Id pattern, as its layer, or as a fresh variable.
 
 occurrence_abstracted(Name, Arity, Source, Layer, File, Representation, Reversed0, Reversed) :-
     (   registered_constructor(File, Name, Arity)
@@ -1184,10 +1221,11 @@ occurrence_represented(undetermined, Name, Arity, _, _, Layer, Variable,
                        Reversed, [occurrence(undetermined(IdName), Layer, Variable, Variable) | Reversed]) :-
     id_name(Name, Arity, IdName).
 
-%!  occurrences_baked(+BottomUp, -Remaining)  an occurrence whose layer is
-%   ground is represented while the file loads, which binds its Id in the
-%   clause; bottom up, so a parent of baked occurrences may become ground in
-%   turn.
+%!  occurrences_baked(+BottomUp, -Remaining)
+%
+%   An occurrence whose layer is ground is represented while the file loads,
+%   which binds its Id in the clause; bottom up, so a parent of baked
+%   occurrences may become ground in turn.
 
 occurrences_baked([], []).
 occurrences_baked([Occurrence | Occurrences], Remaining) :-
@@ -1204,8 +1242,9 @@ occurrence_represented_now(id, Layer, Id) :-
 occurrence_represented_now(undetermined(_), Layer, Variable) :-
     represented(Layer, Variable).
 
-%!  head_scheduled(+BottomUp, +Body0, -Body)  the head row of THE REWRITE
-%   OF A CLAUSE (above).
+%!  head_scheduled(+BottomUp, +Body0, -Body)
+%
+%   The head row of THE REWRITE OF A CLAUSE (above).
 
 head_scheduled([], Body, Body) :-
     !.
@@ -1220,7 +1259,9 @@ head_scheduled(BottomUp, Body0, (Condition -> Fast ; General)) :-
     conjoined([Lookups, Body0], Fast),
     conjoined([Settled, Inserted, Body0, Finished], General).
 
-%!  conjoined(+Goals, -Conjunction)  the goals in order, `true` left out.
+%!  conjoined(+Goals, -Conjunction)
+%
+%   The goals in order, `true` left out.
 
 conjoined(Goals, Conjunction) :-
     goals_kept(Goals, Kept),
@@ -1266,8 +1307,10 @@ variable_member(Variable, [Candidate | Candidates]) :-
     ;   variable_member(Variable, Candidates)
     ).
 
-%!  occurrences_given(+TopLevel, -Condition)  the condition of the fast path
-%   of a head: every top-level occurrence is given.
+%!  occurrences_given(+TopLevel, -Condition)
+%
+%   The condition of the fast path of a head: every top-level occurrence is
+%   given.
 
 occurrences_given([Occurrence], Condition) :-
     !,
@@ -1286,8 +1329,9 @@ occurrence_given(occurrence(undetermined(IdName), _, Variable, _),
                  (nonvar(Variable), (Variable = Id -> nonvar(Handle) ; true))) :-
     compound_name_arguments(Id, IdName, [_, Handle]).
 
-%!  occurrences_goal(+Occurrences, +Step, -Goal)  the conjunction of one step
-%   over the occurrences, in the order given.
+%!  occurrences_goal(+Occurrences, +Step, -Goal)
+%
+%   The conjunction of one step over the occurrences, in the order given.
 
 occurrences_goal([], _, true).
 occurrences_goal([Occurrence], Step, Goal) :-
@@ -1331,8 +1375,10 @@ occurrence_goal(represented_before_call, occurrence(id, Layer, Id, _),
 occurrence_goal(represented_before_call, occurrence(undetermined(_), Layer, Variable, _),
                 hash_consing:represented(Layer, Variable)).
 
-%!  body_rewritten(+Body0, +File, -Body)  the control constructs rewritten
-%   inside, every other goal by `goal_rewritten/3`.
+%!  body_rewritten(+Body0, +File, -Body)
+%
+%   The control constructs rewritten inside, every other goal by
+%   `goal_rewritten/3`.
 
 body_rewritten(Goal, _, Goal) :-
     var(Goal),
@@ -1378,8 +1424,9 @@ body_rewritten(Qualifier:Goal0, File, Qualifier:Goal) :-
 body_rewritten(Goal0, File, Goal) :-
     goal_rewritten(Goal0, File, Goal).
 
-%!  goal_rewritten(+Goal0, +File, -Goal)  the body goal row of THE REWRITE
-%   OF A CLAUSE (above).
+%!  goal_rewritten(+Goal0, +File, -Goal)
+%
+%   The body goal row of THE REWRITE OF A CLAUSE (above).
 
 goal_rewritten(Goal0, File, Goal) :-
     arguments_of_abstracted(Goal0, File, Called, BottomUp),
@@ -1396,8 +1443,9 @@ goal_scheduled(BottomUp, Called, (ground(Variables) -> Fast ; General)) :-
     conjoined([Inserts, Called], Fast),
     conjoined([Settled, Called, Finished], General).
 
-%!  terms_variables(+Occurrences, -Variables)  the variables of the
-%   occurrences' layers other than their own Handles.
+%!  terms_variables(+Occurrences, -Variables)
+%
+%   The variables of the occurrences' layers other than their own Handles.
 
 terms_variables(Occurrences, Variables) :-
     occurrences_terms(Occurrences, Terms),
@@ -1421,8 +1469,10 @@ variables_without([Variable | Variables], Excluded, Kept) :-
     ),
     variables_without(Variables, Excluded, Rest).
 
-%!  listed_absent(+Term, +File, +Place)  no listed constructor occurs in
-%   Term, a place the rewrite does not schedule; raises otherwise.
+%!  listed_absent(+Term, +File, +Place)
+%
+%   No listed constructor occurs in Term, a place the rewrite does not
+%   schedule; raises otherwise.
 
 listed_absent(Term, File, Place) :-
     (   listed_occurs(Term, File)

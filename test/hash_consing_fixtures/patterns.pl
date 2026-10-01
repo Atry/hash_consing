@@ -3,8 +3,7 @@
 %   of them matches stays a plain compound; the occurrences below fall in the
 %   three classes of the rewrite.
 :- module(patterns, [kind/2, size/2, wrapped/2, first/2, built/2, unbound_built/1]).
-:- use_module(library(hash_consing), []).
-:- hash_consing:rewritten([app(abs(_), _), app(app(*, _), _), app(_, ref(_)), abs(_), ref(_)]).
+:- include(patterns_templates).
 
 %   Must intern, every instance taking the first template: the shape `abs/1`
 %   is written into the head.
