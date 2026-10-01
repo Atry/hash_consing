@@ -261,10 +261,12 @@ second: a term that matches no template stays as it is (user, 2026-09-26),
 and a callee could not otherwise tell whether to receive an Id or a plain
 term. (2) Reflection sees Ids: `=..`, `functor/3`, `arg/3`, `write/1`,
 `variant_sha1/2`, `term_hash/2` and ordering whose result depends on the
-order see `'__hash_consed_Name/Arity'(Handle)`. Code that reads structure calls
-`externalized/2` first, and code that builds an instance with them calls
-`internalized/3` after; an instance that must be interned and is left
-uninterned fails to unify at every rewritten position. Using an Id as an
+order see `'__hash_consed_Name/Arity'(Handle)`; the standard order of two Ids
+depends on the history of insertions into the store, not on their terms.
+Code that reads structure calls `externalized/2` first, and code that builds
+an instance with them calls `internalized/3` after; an instance that must
+be interned and is left uninterned fails to unify at every rewritten
+position. Using an Id as an
 opaque key, whose result does not depend on the order (an assoc key, a sort
 to remove duplicates), is fine.
 
@@ -296,10 +298,6 @@ upsert into an insertion of an existing key, which raises, or a lookup into a
 failure, which reads as no answer rather than `resource_error`. A direct probe
 at 1m, 4m and 32m stacks on 2026-09-17 raised `resource_error(stack)` every
 time and did not reproduce it.
-
-FIXME: the order of two Ids depends on the insertion
-history. Nothing checks that no code in an opted-in file reads that order;
-it is a rule of the file, stated above.
 
 FIXME: an Id written into a clause while the file loads
 is a handle of this process. A file must be loaded from source, never
